@@ -1,0 +1,7 @@
+smartusbhub>=1.0
+pyserial>=3.5
+PyYAML>=6.0
+flask>=3.0
+flask-socketio>=5.3
+simple-websocket>=1.0.0
+requests>=2.31

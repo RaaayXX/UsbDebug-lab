@@ -1,0 +1,10 @@
+venv/
+__pycache__/
+*.pyc
+user_settings.json
+config.yaml
+logs/
+
+# SmartUSB Hub 厂商配套软件（体积过大，超出 GitHub 限制）
+docs/SmartUSBHub专业版（串口版本）/配套软件/
+docs/SmartUSBHub专业版（串口版本）/二次开发/工具/

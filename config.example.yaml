@@ -1,0 +1,40 @@
+# 复制为 config.yaml 后按实机填写（Hub 到货后改 COM 口名）
+
+hub:
+  # SmartUSB Hub 指令控制口（设备管理器里的 COMx）
+  command_port: ""          # 例: "COM12"，留空则 scan_and_connect()
+  dut_channel: 1            # 被测板接在 Hub 第几口（1-4）
+
+esp32:
+  # ESP32-S3 USB CDC 串口（烧录/日志，设备管理器里的 COMx）
+  serial_port: ""           # 例: "COM15"
+  baud: 115200
+
+flash:
+  enabled: false            # true 时在记录电流的同时执行烧录
+  # esptool 参数，按你的工程改
+  chip: esp32s3
+  port: ""                  # 留空则使用 esp32.serial_port
+  baud: 921600
+  firmware: ""              # 例: "build/firmware.bin"
+  extra_args: []            # 例: ["--before", "default_reset", "--after", "hard_reset"]
+
+test:
+  power_off_seconds: 0.5    # Hub 断电时长（硬重启）
+  sample_interval_ms: 10    # 电流采样间隔
+  log_duration_seconds: 120 # 单次记录总时长
+  reboot_current_threshold_ma: 30   # 低于此值视为掉电/重启中
+  reboot_min_gap_ms: 200            # 两次重启事件最小间隔（去抖）
+
+output:
+  directory: "./logs"
+
+dashboard:
+  host: "127.0.0.1"
+  port: 8765
+
+ai:
+  enabled: true
+  openai_api_key: ""
+  model: "gpt-4o-mini"
+  base_url: "https://api.openai.com/v1/chat/completions"

@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Power Lab · ESP32-S3 调试平台</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+</head>
+<body class="hub-unavailable">
+  <div id="toastRoot" class="toast-root"></div>
+
+  <div id="guideOverlay" class="guide-overlay" hidden aria-hidden="true">
+    <aside class="guide-panel" role="dialog" aria-labelledby="guideTitle">
+      <header class="guide-head">
+        <h2 id="guideTitle">使用指南</h2>
+        <button type="button" id="btnGuideClose" class="btn btn-text guide-close" aria-label="关闭">关闭</button>
+      </header>
+      <div id="guideContent" class="guide-content prose">
+        <p class="guide-loading">加载中…</p>
+      </div>
+    </aside>
+  </div>
+
+  <div class="page">
+    <header class="header">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true"></div>
+        <div>
+          <h1>Power Lab</h1>
+          <p class="brand-sub">ESP32-S3 与 SmartUSB Hub 联调平台</p>
+        </div>
+      </div>
+      <div class="header-right">
+        <button type="button" id="btnGuide" class="btn btn-guide">使用指南</button>
+        <div class="status-bar" id="statusBar">
+        <div class="status-item" data-key="service"><span class="sd"></span><span class="sl">服务</span></div>
+        <div class="status-item" data-key="hub"><span class="sd"></span><span class="sl">Hub 指令口</span></div>
+        <div class="status-item" data-key="serial"><span class="sd"></span><span class="sl">串口</span></div>
+        <div class="status-item" data-key="vi"><span class="sd"></span><span class="sl">曲线采集</span></div>
+        <div class="status-item" data-key="log"><span class="sd"></span><span class="sl">场景日志</span></div>
+        </div>
+      </div>
+    </header>
+
+    <section class="card card-setup">
+      <div class="setup-head">
+        <h2>设置</h2>
+        <div class="setup-actions">
+          <button type="button" id="btnRefreshPorts" class="btn btn-text">刷新端口</button>
+          <button type="button" id="btnApply" class="btn btn-fill">应用并连接</button>
+          <button type="button" id="btnHubDisconnect" class="btn btn-text hub-only">断开 Hub</button>
+        </div>
+      </div>
+
+      <div class="setup-grid setup-grid-device">
+        <label class="field">
+          <span>ESP32 日志口</span>
+          <select id="selEspPort"><option value="">— 请选择 —</option></select>
+        </label>
+        <label class="field field-sm">
+          <span>波特率</span>
+          <select id="selBaud">
+            <option value="115200">115200</option>
+            <option value="921600">921600</option>
+            <option value="460800">460800</option>
+          </select>
+        </label>
+        <label class="field hub-only">
+          <span>Hub 指令口</span>
+          <select id="selHubPort"><option value="">— 自动 —</option></select>
+        </label>
+        <label class="field field-sm hub-only">
+          <span>被测通道</span>
+          <select id="selChannel" title="Sticky 接在 Hub 的哪一路">
+            <option value="1">通道 1</option><option value="2">通道 2</option>
+            <option value="3">通道 3</option><option value="4">通道 4</option>
+          </select>
+        </label>
+      </div>
+
+      <details class="setup-fold hub-only">
+        <summary>Hub 接线</summary>
+        <p class="setup-fold-body">上行口接 PC；指令控制口选对应 COM，用于通道控制与电气采样。</p>
+      </details>
+
+      <div class="setup-row setup-row-product">
+        <label class="field field-product-name">
+          <span>产品名称</span>
+          <input type="text" id="inpProductName" placeholder="如 reTerminal Sticky" />
+        </label>
+        <div class="field field-product-brief">
+          <span>产品背景</span>
+          <div class="product-brief-upload">
+            <input type="file" id="inpProductBriefFile" accept=".md,.markdown,text/markdown" hidden />
+            <button type="button" id="btnProductBriefPick" class="btn btn-text">上传 .md</button>
+            <button type="button" id="btnProductBriefClear" class="btn btn-text" hidden>清除</button>
+            <span id="productBriefStatus" class="product-brief-status">未上传</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="setup-grid setup-grid-ai">
+        <label class="field">
+          <span>API Key</span>
+          <input type="password" id="inpApiKey" placeholder="sk-…" autocomplete="off" />
+        </label>
+        <label class="field">
+          <span>API 端点</span>
+          <input type="text" id="inpApiBase" placeholder="https://api.chr1.com/v1" />
+        </label>
+        <label class="field">
+          <span>模型</span>
+          <input type="text" id="inpApiModel" placeholder="deepseek-v4-flash" autocomplete="off" />
+        </label>
+        <label class="check-line setup-ai-toggle">
+          <input type="checkbox" id="chkAi" checked /><span>启用 AI</span>
+        </label>
+      </div>
+    </section>
+
+    <main class="layout">
+      <section class="card card-hero hub-only">
+        <div class="card-top card-top-hero">
+          <div class="hero-title-block">
+            <span class="eyebrow">实时</span>
+            <div class="hero-title-row">
+              <h2>电压 · 电流</h2>
+              <button type="button" id="btnSaveVI" class="btn btn-text">保存数据</button>
+            </div>
+            <p class="vi-save-hint">点击「保存数据」将分别生成电压、电流文件（有数据则导出，均含时间戳）。</p>
+          </div>
+          <div class="gauges">
+            <div class="gauge">
+              <div class="gauge-ring" id="gaugeVRing"><span id="gaugeVText">—</span></div>
+              <span class="gauge-label">VBUS</span>
+            </div>
+            <div class="gauge">
+              <div class="gauge-ring gauge-i" id="gaugeIRing"><span id="gaugeIText">—</span></div>
+              <span class="gauge-label">电流 mA</span>
+            </div>
+          </div>
+        </div>
+        <div class="chart-area"><canvas id="chartVI"></canvas></div>
+        <div id="scenarioProgress" class="scenario-progress" hidden>
+          <div class="scenario-bar"><div id="scenarioBarFill" class="scenario-bar-fill"></div></div>
+          <p id="scenarioStepText">—</p>
+        </div>
+        <div id="rebootAlerts" class="alerts"></div>
+      </section>
+
+      <aside class="sidebar">
+        <section class="card card-compact hub-only">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">SmartUSB Hub</span>
+              <h2>快捷指令</h2>
+            </div>
+            <button type="button" class="btn-help" id="btnHubHelp" title="查看指令说明" aria-label="快捷指令说明">?</button>
+          </div>
+          <p class="section-desc">对被测通道执行电源、数据通断及采样操作。</p>
+          <div class="control-grid" id="hubControls">
+            <button type="button" id="btnPowerOn" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-on"></span>上电
+            </button>
+            <button type="button" id="btnPowerOff" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-off"></span>断电
+            </button>
+            <button type="button" id="btnDataOn" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-data-on"></span>连接数据
+            </button>
+            <button type="button" id="btnDataOff" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-data-off"></span>断开数据
+            </button>
+            <button type="button" id="btnVbusOnlyOff" class="ctrl-btn ctrl-wide">
+              <span class="ctrl-icon ctrl-data-on"></span>断供电·保数据
+            </button>
+            <button type="button" id="btnHardReboot" class="ctrl-btn ctrl-wide">
+              <span class="ctrl-icon ctrl-cycle"></span>硬重启
+            </button>
+            <button type="button" id="btnHubTest" class="ctrl-btn ctrl-wide">
+              <span class="ctrl-icon ctrl-log"></span>Hub 自检
+            </button>
+            <button type="button" id="btnMeasureV" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-meter-v"></span>测电压
+            </button>
+            <button type="button" id="btnMeasureI" class="ctrl-btn">
+              <span class="ctrl-icon ctrl-meter-i"></span>测电流
+            </button>
+          </div>
+          <p class="hub-cmd-note">Hub 可独立控制 VBUS 与 D+/D-。「断电」只断 5V；「断供电·保数据」先接通数据线再断 VBUS。若 COM 口仍消失，通常是设备在掉 VBUS 后主动断开 USB（需电池 + 固件支持），而非 Hub 把数据也断了。</p>
+        </section>
+
+        <section class="card card-compact hub-only">
+          <div class="section-head">
+            <div>
+              <span class="eyebrow">自动化</span>
+              <h2>测试场景</h2>
+            </div>
+          </div>
+          <p class="section-desc">先选产品是否带电池，再选测试场景并配置参数。</p>
+          <label class="field field-product">
+            <span>产品类型</span>
+            <select id="selProductType"></select>
+          </label>
+          <p class="product-hint" id="productHint"></p>
+          <label class="field field-scenario">
+            <span>测试场景</span>
+            <select id="selScenario"></select>
+          </label>
+          <p class="scenario-hint" id="scenarioHint"></p>
+          <div id="scenarioParamsUsb" class="scenario-params" hidden>
+            <label class="field field-scenario-param">
+              <span>重复插拔次数</span>
+              <input type="number" id="inpScenarioRepeat" min="1" max="50" step="1" value="5" />
+            </label>
+            <label class="field field-scenario-param">
+              <span>插拔间隔 (秒)</span>
+              <input type="number" id="inpScenarioInterval" min="0" max="120" step="1" value="4" />
+            </label>
+          </div>
+          <div id="scenarioParamsBattery" class="scenario-params" hidden>
+            <label class="field field-scenario-param">
+              <span>重复轮数</span>
+              <input type="number" id="inpBatteryRepeat" min="1" max="50" step="1" value="3" />
+            </label>
+            <label class="field field-scenario-param">
+              <span>仅电池观测时长 (秒)</span>
+              <input type="number" id="inpBatteryDuration" min="10" max="3600" step="1" value="120" />
+            </label>
+          </div>
+          <div class="scenario-run-row">
+            <button type="button" id="btnRunScenario" class="btn-scenario-run">开始测试</button>
+            <button type="button" id="btnScenarioHelp" class="btn-help btn-help-sm" title="场景说明" aria-label="场景说明">?</button>
+          </div>
+        </section>
+      </aside>
+
+      <section class="card card-serial">
+        <div class="card-top">
+          <div><span class="eyebrow">日志</span><h2>串口输出</h2></div>
+          <div class="card-tools">
+            <label class="toggle"><input type="checkbox" id="chkAutoscroll" checked /><span class="toggle-track"></span><span>自动滚动</span></label>
+            <button type="button" id="btnSaveSerial" class="btn btn-text">保存日志</button>
+            <button type="button" id="btnClearLog" class="btn btn-text">清空</button>
+          </div>
+        </div>
+        <pre id="serialLog" class="terminal"></pre>
+      </section>
+
+      <section class="card card-analysis">
+        <div class="card-top">
+          <div><span class="eyebrow">诊断</span><h2>分析结果</h2></div>
+          <div class="card-tools analysis-head-tools">
+            <span id="analysisBadge" class="status-chip">待分析</span>
+            <button type="button" id="btnSaveReport" class="btn btn-text">保存全部（曲线+测试记录+日志）</button>
+          </div>
+        </div>
+        <div class="analysis-input">
+          <label class="field field-observation">
+            <span>观察到的现象（选填）</span>
+            <textarea
+              id="inpUserObservation"
+              rows="4"
+              placeholder="例如：烧录后屏幕不亮；插拔 USB 后约 3 秒重启；待机电流明显高于上一版固件…"
+            ></textarea>
+          </label>
+          <p class="observation-hint">填写后将与当前串口日志、电压/电流曲线一并参与规则检测与 AI 分析。</p>
+          <button type="button" id="btnAnalyze" class="btn btn-fill btn-block">智能分析</button>
+        </div>
+        <p id="analysisSummary" class="analysis-lead">填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将全部导出为诊断报告及原始数据。</p>
+        <p id="analysisAiHint" class="analysis-ai-hint" hidden></p>
+        <div id="findingsList" class="findings"></div>
+        <details id="aiDetails" class="ai-block" hidden>
+          <summary>完整 AI 回复</summary>
+          <div id="aiText" class="ai-body prose"></div>
+        </details>
+      </section>
+    </main>
+  </div>
+
+  <div id="helpPopover" class="help-popover" hidden aria-hidden="true">
+    <div class="help-popover-card" role="dialog" aria-labelledby="helpPopoverTitle">
+      <header class="help-popover-head">
+        <h3 id="helpPopoverTitle">说明</h3>
+        <button type="button" id="btnHelpPopoverClose" class="btn btn-text" aria-label="关闭">×</button>
+      </header>
+      <div id="helpPopoverBody" class="help-popover-body prose"></div>
+      <footer class="help-popover-foot">
+        <button type="button" id="btnHelpPopoverOk" class="btn btn-fill">知道了</button>
+      </footer>
+    </div>
+  </div>
+
+  <script src="/static/scenarios.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>
