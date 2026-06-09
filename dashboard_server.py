@@ -19,6 +19,11 @@ import hub_common  # noqa: F401 — 应用 SmartUSBHub 补丁
 
 from smartusbhub import SmartUSBHub
 
+from device_compat import (
+    is_likely_serial_device,
+    public_device_profiles,
+    suggest_device_profile_from_port,
+)
 from hub_common import ROOT
 from log_analyzer import full_analyze
 from hub_plug import plug_mode, plug_mode_needs_serial_reconnect, product_has_battery, product_type_label
@@ -70,30 +75,44 @@ def list_all_ports() -> list[dict[str, str]]:
                 "vid": vid,
                 "pid": pid,
                 "is_hub_command": is_hub,
-                "is_likely_esp32": _guess_esp32(p, is_hub),
+                "is_likely_esp32": is_likely_serial_device(p, is_hub),
+                "is_likely_device": is_likely_serial_device(p, is_hub),
+                "device_profile_hint": suggest_device_profile_from_port(p) or "",
             }
         )
     return items
 
 
 def _guess_esp32(port: serial.tools.list_ports.ListPortInfo, is_hub: bool) -> bool:
-    if is_hub:
-        return False
-    text = f"{port.description} {port.manufacturer or ''} {port.hwid or ''}".upper()
-    keys = ("ESP", "USB JTAG", "SERIAL", "CH340", "CP210", "FTDI", "303A", "10C4")
-    return any(k in text for k in keys)
+    """兼容旧接口；见 device_compat.is_likely_serial_device。"""
+    return is_likely_serial_device(port, is_hub)
 
 
 def suggest_ports(ports: list[dict[str, str]]) -> dict[str, str]:
     hub = next((p["device"] for p in ports if p["is_hub_command"]), "")
-    esp = next((p["device"] for p in ports if p["is_likely_esp32"]), "")
-    if not esp:
-        esp = next(
+    dev = next(
+        (p["device"] for p in ports if p.get("is_likely_device") or p.get("is_likely_esp32")),
+        "",
+    )
+    if not dev:
+        dev = next(
             (p["device"] for p in ports if not p["is_hub_command"]),
             "",
         )
-    return {"hub_command_port": hub, "esp32_serial_port": esp}
+    profile = ""
+    for p in ports:
+        if p.get("device") == dev and p.get("device_profile_hint"):
+            profile = p["device_profile_hint"]
+            break
+    return {"hub_command_port": hub, "esp32_serial_port": dev, "device_profile_hint": profile}
 
+
+def _device_log_port_label() -> str:
+    return "设备日志口"
+
+
+def _serial_port_error() -> str:
+    return f"未选择{_device_log_port_label()}"
 
 def _port_is_hub_command(port: str) -> bool:
     """所选 COM 是否为 SmartUSB Hub 指令口（与 list_all_ports 判定一致）。"""
@@ -242,7 +261,7 @@ class MonitorSession:
         s = get_settings()
         port = s.get("esp32_serial_port") or ""
         if not port:
-            return {"ok": False, "msg": "请选择 ESP32 日志口"}
+            return {"ok": False, "msg": _serial_port_error()}
         if self.serial_open:
             return {"ok": True, "msg": "串口已打开"}
         self._stop_serial.clear()
@@ -566,6 +585,7 @@ _CONNECT_SETTING_KEYS = (
     "hub_dut_channel",
     "esp32_serial_port",
     "esp32_baud",
+    "device_profile",
 )
 
 
@@ -581,7 +601,7 @@ def _reconnect_devices(
     refresh_serial: bool = False,
     settings_patch: Optional[dict[str, Any]] = None,
 ) -> dict[str, Any]:
-    """尝试连接 Hub 与 ESP32 串口（快捷指令/场景前调用）。"""
+    """尝试连接 Hub 与设备日志串口（快捷指令/场景前调用）。"""
     if settings_patch:
         patch = _settings_patch_from_body(settings_patch)
         if patch:
@@ -628,7 +648,7 @@ def _reconnect_devices(
             else:
                 result["serial_open"] = True
     else:
-        result["serial_error"] = "未选择 ESP32 日志口"
+        result["serial_error"] = _serial_port_error()
 
     _broadcast_status()
     return result
@@ -905,7 +925,7 @@ def _run_usb_cycle_scenario(data: Optional[dict] = None) -> None:
         return
     s = get_settings()
     if not s.get("esp32_serial_port"):
-        socketio.emit("toast", {"level": "error", "msg": "请先选择 ESP32 串口"})
+        socketio.emit("toast", {"level": "error", "msg": f"请先选择{_device_log_port_label()}"})
         return
 
     def worker() -> None:
@@ -1012,7 +1032,7 @@ def _run_usb_cycle_scenario(data: Optional[dict] = None) -> None:
                     "toast",
                     {
                         "level": "warn",
-                        "msg": "串口日志为空：请确认 ESP32 日志口、波特率，或插拔后是否成功重连",
+                        "msg": f"串口日志为空：请确认{_device_log_port_label()}、波特率，或插拔后是否成功重连",
                     },
                 )
             result = full_analyze(serial_text, _session.power_samples, cfg)
@@ -1104,7 +1124,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
         )
         return
     if not s.get("esp32_serial_port"):
-        socketio.emit("toast", {"level": "error", "msg": "请先选择 ESP32 串口"})
+        socketio.emit("toast", {"level": "error", "msg": f"请先选择{_device_log_port_label()}"})
         return
 
     def worker() -> None:
@@ -1249,7 +1269,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
                     "toast",
                     {
                         "level": "warn",
-                        "msg": "串口日志为空：请确认 ESP32 日志口、波特率及数据线是否保持连通",
+                        "msg": f"串口日志为空：请确认{_device_log_port_label()}、波特率及数据线是否保持连通",
                     },
                 )
             result = full_analyze(serial_text, _session.power_samples, cfg)
@@ -1341,6 +1361,11 @@ def api_guide() -> Any:
     )
 
 
+@app.route("/api/device_profiles")
+def api_device_profiles() -> Any:
+    return jsonify({"profiles": public_device_profiles()})
+
+
 @app.route("/api/ports")
 def api_ports() -> Any:
     ports = list_all_ports()
@@ -1380,7 +1405,7 @@ def api_settings_post() -> Any:
             else:
                 msgs.append("Hub 未连接（可留空指令口稍后重试）")
 
-    serial_info: dict[str, Any] = {"ok": False, "msg": "未选择 ESP32 日志口"}
+    serial_info: dict[str, Any] = {"ok": False, "msg": _serial_port_error()}
     with _session_lock:
         if esp_port:
             if _session.serial_open:
@@ -1500,9 +1525,12 @@ def _analysis_cfg_from_body(body: dict) -> dict[str, Any]:
         "hub_connected",
         "openai_base_url",
         "openai_model",
+        "device_profile",
+        "esp32_serial_port",
     ):
         if key in body:
             cfg[key] = body[key]
+    cfg["port_hint"] = str(cfg.get("esp32_serial_port") or "")
     if "hub_connected" not in cfg:
         cfg["hub_connected"] = _hub.hub is not None
     if "hub_available" not in cfg:

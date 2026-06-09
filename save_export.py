@@ -411,7 +411,7 @@ def _format_report_markdown(
         "",
         f"**生成时间：** {meta['saved_at']}",
         f"**Hub 指令口：** {meta.get('hub_command_port') or '—'}  |  **被测通道：** {meta.get('hub_dut_channel', 1)}",
-        f"**ESP32 日志口：** {meta.get('esp32_serial_port') or '—'}  |  **波特率：** {meta.get('esp32_baud', 115200)}",
+        f"**设备日志口：** {meta.get('esp32_serial_port') or '—'}  |  **波特率：** {meta.get('esp32_baud', 115200)}",
         f"**产品类型：** {meta.get('product_type') or '—'}",
         "",
     ]

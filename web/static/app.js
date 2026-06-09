@@ -270,7 +270,7 @@ function fillPortSelect(sel, ports, hubOnly) {
     if (!hubOnly && p.is_hub_command) continue;
     const opt = document.createElement("option");
     opt.value = p.device;
-    const tag = p.is_likely_esp32 ? " ★" : "";
+    const tag = p.is_likely_device || p.is_likely_esp32 ? " ★" : "";
     opt.textContent = `${p.device} — ${p.description || "串口"}${tag}`;
     sel.appendChild(opt);
   }
@@ -278,6 +278,34 @@ function fillPortSelect(sel, ports, hubOnly) {
 }
 
 let hubAvailable = false;
+let deviceProfiles = [];
+
+async function loadDeviceProfiles() {
+  try {
+    const res = await fetch("/api/device_profiles");
+    const data = await res.json();
+    deviceProfiles = data.profiles || [];
+    fillDeviceProfileSelect();
+  } catch {
+    deviceProfiles = [{ id: "auto", label: "自动识别", hint: "" }];
+    fillDeviceProfileSelect();
+  }
+}
+
+function fillDeviceProfileSelect() {
+  const sel = $("selDeviceProfile");
+  if (!sel) return;
+  const cur = sel.value || settings.device_profile || "auto";
+  sel.innerHTML = "";
+  for (const p of deviceProfiles) {
+    const opt = document.createElement("option");
+    opt.value = p.id;
+    opt.textContent = p.label;
+    if (p.hint) opt.title = p.hint;
+    sel.appendChild(opt);
+  }
+  sel.value = cur;
+}
 
 function isHubAvailable(st) {
   if (st && st.hub_available !== undefined) return !!st.hub_available;
@@ -372,6 +400,18 @@ function applyHubAvailabilityUi(st) {
   if (hubStatus) hubStatus.style.display = hub ? "" : "none";
   const viStatus = document.querySelector('.status-item[data-key="vi"]');
   if (viStatus) viStatus.style.display = hub ? "" : "none";
+  const saveReport = $("btnSaveReport");
+  if (saveReport) {
+    saveReport.textContent = hub
+      ? "保存全部（曲线+测试记录+日志）"
+      : "保存报告与日志";
+  }
+  const summary = $("analysisSummary");
+  if (summary && !summary.dataset.hasResult) {
+    summary.textContent = hub
+      ? "填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将全部导出为诊断报告及原始数据。"
+      : "填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将导出诊断报告及串口日志。";
+  }
 }
 
 async function loadSettings() {
@@ -383,6 +423,9 @@ async function loadSettings() {
   renderProductBriefStatus();
   $("selHubPort").value = settings.hub_command_port || "";
   $("selEspPort").value = settings.esp32_serial_port || "";
+  if ($("selDeviceProfile")) {
+    $("selDeviceProfile").value = settings.device_profile || "auto";
+  }
   $("selChannel").value = String(settings.hub_dut_channel || 1);
   $("selBaud").value = String(settings.esp32_baud || 115200);
   if ($("selProductType").options.length) {
@@ -551,6 +594,7 @@ function collectSettings() {
     hub_dut_channel: parseInt($("selChannel").value, 10),
     esp32_serial_port: $("selEspPort").value,
     esp32_baud: parseInt($("selBaud").value, 10),
+    device_profile: $("selDeviceProfile")?.value || "auto",
     product_type: $("selProductType")?.value || "battery",
     ...getScenarioParams(),
     ai_enabled: $("chkAi").checked,
@@ -572,6 +616,7 @@ function analysisPayloadExtra() {
     product_brief_file: productBriefFileName,
     hub_available: hubAvailable,
     hub_connected: !!deviceStatus.hub_connected,
+    device_profile: $("selDeviceProfile")?.value || settings.device_profile || "auto",
   };
 }
 
@@ -707,7 +752,9 @@ function renderFindingCard(f, extraClass = "") {
 
 function renderAnalysis(data) {
   lastAnalysis = data;
-  $("analysisSummary").textContent = data.summary || "";
+  const summaryEl = $("analysisSummary");
+  summaryEl.textContent = data.summary || "";
+  summaryEl.dataset.hasResult = data.summary ? "1" : "";
   const aiHint = $("analysisAiHint");
   if (aiHint) {
     const skip = data.ai_skip_reason || "";
@@ -1149,19 +1196,39 @@ function bindUi() {
   };
 }
 
+function applyPortProfileHint(ports, deviceName) {
+  if (!$("selDeviceProfile") || ($("selDeviceProfile").value && $("selDeviceProfile").value !== "auto")) {
+    return;
+  }
+  const port = (ports || []).find((p) => p.device === deviceName);
+  if (port?.device_profile_hint) {
+    $("selDeviceProfile").value = port.device_profile_hint;
+  }
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   initChart();
   loadUserObservation();
   renderProductTypes();
   bindUi();
   connectSocket();
+  await loadDeviceProfiles();
   await loadSettings();
-  const suggest = await loadPorts();
+  const portData = await loadPorts();
+  const suggest = portData || {};
   if (suggest.hub_command_port && !$("selHubPort").value) {
     $("selHubPort").value = suggest.hub_command_port;
   }
   if (suggest.esp32_serial_port && !$("selEspPort").value) {
     $("selEspPort").value = suggest.esp32_serial_port;
   }
+  if (suggest.device_profile_hint && $("selDeviceProfile")?.value === "auto") {
+    $("selDeviceProfile").value = suggest.device_profile_hint;
+  }
+  $("selEspPort")?.addEventListener("change", async () => {
+    const res = await fetch("/api/ports");
+    const data = await res.json();
+    applyPortProfileHint(data.ports, $("selEspPort").value);
+  });
   updateGauges(null, null);
 });

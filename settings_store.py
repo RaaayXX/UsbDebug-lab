@@ -18,6 +18,7 @@ DEFAULTS: dict[str, Any] = {
     "hub_dut_channel": 1,
     "esp32_serial_port": "",
     "esp32_baud": 115200,
+    "device_profile": "auto",
     "product_type": "battery",
     "active_scenario": "usb_power_cycle",
     "power_off_seconds": 0.8,
@@ -86,6 +87,9 @@ def load_settings() -> dict[str, Any]:
         data["active_scenario"] = "usb_power_cycle"
     if data["active_scenario"] == "battery_only_serial" and not product_has_battery(data):
         data["active_scenario"] = "usb_power_cycle"
+    from device_compat import normalize_device_profile
+
+    data["device_profile"] = normalize_device_profile(data.get("device_profile"))
     return data
 
 

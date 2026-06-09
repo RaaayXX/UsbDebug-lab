@@ -1,6 +1,6 @@
-# Power Lab — ESP32-S3 与 SmartUSB Hub 调试工具
+# Power Lab — Seeed XIAO 与 SmartUSB Hub 调试工具
 
-Power Lab 提供 **Web 仪表盘** 与 **命令行工具**，面向固件体验测试与 Bug 定位：可仅看串口日志 + 描述现象做 AI/规则分析，也可接入 SmartUSB Hub 做供电与插拔场景测试。
+Power Lab 提供 **Web 仪表盘** 与 **命令行工具**，面向固件体验测试与 Bug 定位：可仅看串口日志 + 描述现象做 AI/规则分析，也可接入 SmartUSB Hub 做供电与插拔场景测试。**主要兼容 Seeed Studio XIAO 全系列**（ESP32 / SAMD21 / RP2040 / nRF52 / RA4M1 / MG24 等），亦支持其他 USB 串口日志设备。
 
 ## 功能概览
 
@@ -67,7 +67,7 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 PC ── SmartUSB Hub USB 上行口
 PC ── SmartUSB Hub 指令控制口
-Hub 被测通道 ── ESP32-S3
+Hub 被测通道 ── 被测开发板（如 Seeed XIAO）
 ```
 
 ## 参考链接

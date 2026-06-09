@@ -166,13 +166,19 @@ body.guide-open { overflow: hidden; }
 .prose a { color: var(--accent-v); }
 .brand { display: flex; align-items: center; gap: 14px; }
 .brand-mark {
-  width: 44px; height: 44px;
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--accent-i), var(--accent-v));
-  opacity: 0.85;
+  overflow: hidden;
+  box-shadow: 0 2px 8px rgba(26, 35, 50, 0.18);
 }
-.brand h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.02em; }
-.brand-sub { font-size: 0.8rem; color: var(--text-secondary); }
+.brand-mark svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.brand h1 { font-size: 1.3rem; font-weight: 600; letter-spacing: -0.02em; margin: 0; }
 
 .status-bar {
   display: flex;

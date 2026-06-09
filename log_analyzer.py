@@ -1,5 +1,5 @@
 """
-ESP32-S3 串口日志 + 电流采样 — 规则检测与可选 AI 分析。
+串口日志 + 电流采样 — 规则检测与可选 AI 分析（支持 Seeed XIAO 多芯片系列）。
 """
 
 from __future__ import annotations
@@ -12,6 +12,15 @@ import urllib.request
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from device_compat import (
+    log_origin_label,
+    profile_label,
+    resolve_device_profile,
+    get_log_patterns,
+    get_boot_markers,
+    count_boot_cycles,
+    normalize_device_profile,
+)
 from hub_common import cfg_get
 
 
@@ -71,7 +80,7 @@ _CATEGORY_META: dict[str, dict[str, str]] = {
     "serial": {
         "source": "串口日志",
         "likely_cause": "未采集到有效日志或设备未输出。",
-        "recommendation": "确认 ESP32 日志口、波特率与固件日志输出通道（USB CDC / UART）。",
+        "recommendation": "确认设备日志 COM 口、波特率与固件日志输出通道（USB CDC / UART）。",
     },
     "ai": {
         "source": "分析服务",
@@ -102,7 +111,6 @@ _DEFAULT_META = {
 }
 
 
-_LOG_ORIGIN = "ESP32 串口日志（Web 串口输出区 / 场景录制）"
 
 
 def _log_line_at_match(text: str, pattern: str) -> tuple[int, str, str]:
@@ -186,50 +194,16 @@ class AnalysisResult:
         return out
 
 
-# ESP32 / IDF 常见异常模式
-_LOG_PATTERNS: list[tuple[str, str, str, str]] = [
-    (r"Guru Meditation Error", "critical", "panic", "芯片 Panic（Guru Meditation）"),
-    (r"abort\(\) was called", "critical", "abort", "固件 abort() 主动崩溃"),
-    (r"Stack overflow", "critical", "stack", "任务栈溢出"),
-    (r"Brownout detector", "warning", "power", "欠压检测（供电不足）"),
-    (r"task watchdog", "critical", "wdt", "任务看门狗超时"),
-    (r"Interrupt wdt timeout", "critical", "wdt", "中断看门狗超时"),
-    (r"LoadProhibited|StoreProhibited|InstrFetchProhibited", "critical", "memory", "非法内存访问"),
-    (r"ESP_ERROR_CHECK failed", "critical", "esp_err", "ESP_ERROR_CHECK 失败"),
-    (r"assert failed", "critical", "assert", "断言失败"),
-    (r"rst:0x[0-9a-fA-F]+", "info", "reset", "复位原因寄存器（rst:）"),
-    (r"POWERON_RESET|SW_RESET|DEEPSLEEP_RESET|RTC_SW_CPU_RST", "info", "hw_reset", "硬件/软件复位原因"),
-    (r"Brownout|BOD", "warning", "hw_reset", "欠压导致复位"),
-    (r"Rebooting\.\.\.", "warning", "reboot", "日志中出现 Rebooting"),
-    (r"ets_main\.c", "info", "boot", "ROM 启动阶段"),
-    (r"boot: ESP-IDF", "info", "boot", "IDF 二次启动"),
-    (r"Backtrace:", "warning", "backtrace", "崩溃回溯"),
-    (r"CORRUPT HEAP", "critical", "heap", "堆损坏"),
-    (r"wifi:", "info", "wifi", "WiFi 子系统日志（检查是否异常刷屏）"),
-    (r"E \(", "warning", "esp_log", "ERROR 级别日志行"),
-    (
-        r"network\s*issue|Network\s*(error|fail|down)|no\s*network|wifi.*(?:fail|disconnect|error)|连接.*失败|网络.*异常",
-        "warning",
-        "network",
-        "日志中出现网络相关异常提示",
-    ),
-]
-
-_BOOT_MARKERS = (
-    "ESP-ROM:",
-    "boot: ESP-IDF",
-    "rst:0x",
-    "entry 0x",
+_ERROR_LINE_PATTERNS = (
+    r"\bE \(",
+    r"\bERROR\b",
+    r"\[ERROR\]",
+    r"HardFault",
+    r"FATAL",
+    r"NRF_ERROR",
+    r"FSP_ERR",
+    r"SL_STATUS_\w+",
 )
-
-
-def _count_boots(text: str) -> int:
-    n = 0
-    for line in text.splitlines():
-        s = line.strip()
-        if any(m in s for m in _BOOT_MARKERS):
-            n += 1
-    return max(0, n // 2)  # 粗略：成对出现
 
 
 def analyze_power_samples(
@@ -380,14 +354,24 @@ def analyze_usb_reconnect(
     return findings
 
 
-def analyze_serial_log(text: str) -> tuple[list[Finding], dict[str, Any]]:
+def analyze_serial_log(
+    text: str,
+    device_profile: str = "auto",
+    port_hint: str = "",
+) -> tuple[list[Finding], dict[str, Any]]:
+    resolved = resolve_device_profile(device_profile, text, port_hint or None)
+    log_origin = log_origin_label(resolved)
+    patterns = get_log_patterns(resolved)
     findings: list[Finding] = []
     stats: dict[str, Any] = {
         "lines": len(text.splitlines()),
         "chars": len(text),
-        "boot_cycles_est": _count_boots(text),
+        "boot_cycles_est": count_boot_cycles(text, resolved),
         "error_lines": 0,
         "warn_lines": 0,
+        "device_profile": device_profile or "auto",
+        "device_profile_resolved": resolved,
+        "device_profile_label": profile_label(resolved),
     }
 
     if not text.strip():
@@ -395,7 +379,7 @@ def analyze_serial_log(text: str) -> tuple[list[Finding], dict[str, Any]]:
         return findings, stats
 
     seen: set[str] = set()
-    for pattern, severity, cat, msg in _LOG_PATTERNS:
+    for pattern, severity, cat, msg in patterns:
         if re.search(pattern, text, re.IGNORECASE | re.MULTILINE):
             key = f"{cat}:{msg}"
             if key not in seen:
@@ -412,43 +396,44 @@ def analyze_serial_log(text: str) -> tuple[list[Finding], dict[str, Any]]:
                         cat,
                         msg,
                         evidence=evidence,
-                        log_origin=_LOG_ORIGIN,
+                        log_origin=log_origin,
                         log_location=location,
                         log_excerpt=line_text or keyword,
                     )
                 )
 
     error_snippets: list[str] = []
+    error_pattern = "|".join(f"(?:{p})" for p in _ERROR_LINE_PATTERNS)
     for line in text.splitlines():
-        if re.search(r"\bE \(", line) or " ERROR " in line:
+        if re.search(error_pattern, line, re.IGNORECASE):
             stats["error_lines"] += 1
             if len(error_snippets) < 3:
                 error_snippets.append(line.strip()[:240])
-        if re.search(r"\bW \(", line) or " WARN " in line:
+        if re.search(r"\bW \(", line) or " WARN " in line or "[WARN]" in line:
             stats["warn_lines"] += 1
 
     if error_snippets and stats["error_lines"] > 0:
         for f in findings:
-            if f.category == "esp_log":
+            if f.category in ("esp_log", "fatal", "hardfault", "nrf_err", "fsp_err"):
                 if not f.log_excerpt and error_snippets:
-                    ln, line = _log_line_containing(text, "E (")
+                    ln, line = _log_line_containing(text, error_snippets[0][:20])
                     if not line and error_snippets[0]:
                         line = error_snippets[0]
                     f.log_excerpt = line
                     f.evidence = line
-                    f.log_origin = f.log_origin or _LOG_ORIGIN
+                    f.log_origin = f.log_origin or log_origin
                     if ln:
                         f.log_location = f"第 {ln} 行"
                 break
         else:
-            ln, line = _log_line_containing(text, "E (")
+            ln, line = _log_line_containing(text, error_snippets[0][:20])
             findings.append(
                 Finding(
                     "warning",
                     "esp_log",
-                    f"日志中有 {stats['error_lines']} 行 ERROR",
+                    f"日志中有 {stats['error_lines']} 行 ERROR / 异常",
                     evidence=line or " | ".join(error_snippets),
-                    log_origin=_LOG_ORIGIN,
+                    log_origin=log_origin,
                     log_location=f"第 {ln} 行" if ln else "",
                     log_excerpt=line or error_snippets[0],
                 )
@@ -456,18 +441,19 @@ def analyze_serial_log(text: str) -> tuple[list[Finding], dict[str, Any]]:
 
     boots = stats["boot_cycles_est"]
     if boots >= 2:
-        ln, line = _log_line_containing(text, "ESP-ROM:")
-        if not line:
-            ln, line = _log_line_containing(text, "boot:")
-        if not line:
-            ln, line = _log_line_containing(text, "rst:0x")
+        boot_markers = get_boot_markers(resolved) if resolved != "generic" else ("boot", "reset", "ESP-ROM:")
+        ln, line = 0, ""
+        for marker in boot_markers:
+            ln, line = _log_line_containing(text, marker)
+            if line:
+                break
         findings.append(
             Finding(
                 "warning",
                 "reboot",
                 f"日志中约 {boots} 次启动痕迹，可能存在多次重启",
-                evidence=line or "匹配 ESP-ROM / boot: / rst: 等标记",
-                log_origin=_LOG_ORIGIN,
+                evidence=line or f"匹配 {profile_label(resolved)} 启动标记",
+                log_origin=log_origin,
                 log_location=f"第 {ln} 行" if ln else "多处启动标记",
                 log_excerpt=line,
             )
@@ -517,8 +503,14 @@ def rule_based_analyze(
     threshold_ma: int = 30,
     user_observation: str = "",
     hub_available: bool = True,
+    device_profile: str = "auto",
+    port_hint: str = "",
 ) -> AnalysisResult:
-    log_findings, stats = analyze_serial_log(serial_text)
+    log_findings, stats = analyze_serial_log(
+        serial_text,
+        device_profile=device_profile,
+        port_hint=port_hint,
+    )
     power_findings = analyze_power_samples(
         power_samples,
         threshold_ma=threshold_ma,
@@ -556,7 +548,12 @@ def _product_context_block(cfg: dict[str, Any]) -> str:
         mode_label = "当前未识别 Hub，分析主要依据串口日志"
     name = (cfg.get("product_name") or "").strip()
     brief = (cfg.get("product_brief") or "").strip()
+    profile = normalize_device_profile(cfg.get("device_profile"))
+    resolved = cfg.get("device_profile_resolved") or profile
+    if profile == "auto" and not cfg.get("device_profile_resolved"):
+        resolved = resolve_device_profile(profile, cfg.get("serial_preview") or "", cfg.get("port_hint"))
     lines = [f"测试工具：{mode_label}"]
+    lines.append(f"设备类型：{profile_label(resolved)}（配置：{profile_label(profile)}）")
     if name:
         lines.append(f"产品名称：{name}")
     lines.append(f"产品介绍：{brief if brief else '（未填写，请仅依据日志与现象分析）'}")
@@ -768,12 +765,16 @@ def full_analyze(
     )
     user_obs = (user_observation or cfg.get("user_observation") or "").strip()
     hub_ok = bool(cfg.get("hub_available"))
+    device_profile = str(cfg.get("device_profile") or "auto")
+    port_hint = str(cfg.get("port_hint") or cfg.get("esp32_serial_port") or "")
     result = rule_based_analyze(
         serial_text,
         power_samples,
         threshold_ma=threshold,
         user_observation=user_obs,
         hub_available=hub_ok,
+        device_profile=device_profile,
+        port_hint=port_hint,
     )
 
     plug_times = cfg.get("scenario_plug_times_ms")

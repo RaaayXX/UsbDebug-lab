@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Power Lab · ESP32-S3 调试平台</title>
+  <title>USBDebug Lab</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
@@ -30,11 +30,20 @@
   <div class="page">
     <header class="header">
       <div class="brand">
-        <div class="brand-mark" aria-hidden="true"></div>
-        <div>
-          <h1>Power Lab</h1>
-          <p class="brand-sub">ESP32-S3 与 SmartUSB Hub 联调平台</p>
+        <div class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 44 44" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <rect width="44" height="44" rx="12" fill="#1a2332"/>
+            <path d="M22 8v5" stroke="#5eead4" stroke-width="2.2" stroke-linecap="round"/>
+            <circle cx="22" cy="6" r="2.2" fill="#5eead4"/>
+            <rect x="14" y="13" width="16" height="11" rx="3" stroke="#94a3b8" stroke-width="1.8"/>
+            <path d="M17 24v4M22 24v4M27 24v4" stroke="#64748b" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M13 31h18" stroke="#64748b" stroke-width="1.8" stroke-linecap="round"/>
+            <path d="M15 34.5h14" stroke="#475569" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M16.5 18.5h3.5M24 18.5h3.5" stroke="#5eead4" stroke-width="1.6" stroke-linecap="round"/>
+            <path d="M28 18l3.5 3.5L28 25" stroke="#fbbf24" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </div>
+        <h1>USBDebug Lab</h1>
       </div>
       <div class="header-right">
         <button type="button" id="btnGuide" class="btn btn-guide">使用指南</button>
@@ -60,8 +69,14 @@
 
       <div class="setup-grid setup-grid-device">
         <label class="field">
-          <span>ESP32 日志口</span>
+          <span>设备日志口</span>
           <select id="selEspPort"><option value="">— 请选择 —</option></select>
+        </label>
+        <label class="field">
+          <span>设备类型</span>
+          <select id="selDeviceProfile" title="影响规则分析所匹配的日志关键字；自动识别将根据 COM 描述与日志内容推断">
+            <option value="auto">自动识别</option>
+          </select>
         </label>
         <label class="field field-sm">
           <span>波特率</span>
@@ -258,7 +273,7 @@
           <div><span class="eyebrow">诊断</span><h2>分析结果</h2></div>
           <div class="card-tools analysis-head-tools">
             <span id="analysisBadge" class="status-chip">待分析</span>
-            <button type="button" id="btnSaveReport" class="btn btn-text">保存全部（曲线+测试记录+日志）</button>
+            <button type="button" id="btnSaveReport" class="btn btn-text">保存报告与日志</button>
           </div>
         </div>
         <div class="analysis-input">
@@ -270,10 +285,10 @@
               placeholder="例如：烧录后屏幕不亮；插拔 USB 后约 3 秒重启；待机电流明显高于上一版固件…"
             ></textarea>
           </label>
-          <p class="observation-hint">填写后将与当前串口日志、电压/电流曲线一并参与规则检测与 AI 分析。</p>
+          <p id="observationHint" class="observation-hint hub-only">填写后将与当前串口日志、电压/电流曲线一并参与规则检测与 AI 分析。</p>
           <button type="button" id="btnAnalyze" class="btn btn-fill btn-block">智能分析</button>
         </div>
-        <p id="analysisSummary" class="analysis-lead">填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将全部导出为诊断报告及原始数据。</p>
+        <p id="analysisSummary" class="analysis-lead">填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将导出诊断报告及串口日志。</p>
         <p id="analysisAiHint" class="analysis-ai-hint" hidden></p>
         <div id="findingsList" class="findings"></div>
         <details id="aiDetails" class="ai-block" hidden>
