@@ -211,6 +211,26 @@ function renderDeviceStatus(st) {
     updateGauges(st.live_v_mv, st.live_i_ma);
   }
   applyBatteryUi();
+  applyAutoProfileFromStatus(st);
+}
+
+function applyAutoDeviceProfile(profileId) {
+  const sel = $("selDeviceProfile");
+  if (!sel || sel.value !== "auto") return false;
+  const id = (profileId || "").trim();
+  if (!id || id === "auto") return false;
+  const hasOpt = [...sel.options].some((o) => o.value === id);
+  if (!hasOpt) return false;
+  sel.value = id;
+  return true;
+}
+
+function applyAutoProfileFromStatus(st) {
+  if ($("selDeviceProfile")?.value !== "auto") return;
+  const resolved = st?.device_profile_resolved;
+  if (st?.device_profile_auto_state === "detected" && resolved) {
+    applyAutoDeviceProfile(resolved);
+  }
 }
 
 function viStatusLabel(st) {
@@ -257,7 +277,7 @@ async function loadPorts() {
   if (data.hub_available !== undefined) {
     applyHubAvailabilityUi({ hub_available: data.hub_available });
   }
-  return data.suggest || {};
+  return data;
 }
 
 function fillPortSelect(sel, ports, hubOnly) {
@@ -461,6 +481,7 @@ async function loadSettings() {
 }
 
 function buildPowerPayload() {
+  if (!powerData.t.length) return [];
   return powerData.t.map((t, i) => ({
     t,
     v: powerData.v[i],
@@ -514,7 +535,7 @@ async function saveSerial() {
 }
 
 async function saveReport() {
-  const samples = hubAvailable ? buildPowerPayload() : [];
+  const samples = buildPowerPayload();
   if (
     !lastAnalysis &&
     !getSerialText().trim() &&
@@ -527,7 +548,7 @@ async function saveReport() {
   toast("info", "正在生成诊断报告…");
   const body = buildSaveBody({
     analysis: lastAnalysis || undefined,
-    power: samples,
+    power: samples.length ? samples : undefined,
     serial: getSerialText(),
     measures: measureHistory.length ? measureHistory : undefined,
     ai_enabled: $("chkAi").checked,
@@ -548,7 +569,7 @@ async function saveReport() {
       lastAnalysis = data.analysis;
       renderAnalysis(data.analysis);
     }
-    toast("ok", `报告已保存 ${data.saved_at}\n${data.report_path || data.directory}`);
+    toast("ok", `报告已保存 ${data.saved_at}\n${formatSaveResult(data)}`);
   } else toast("error", data.msg || "保存失败");
 }
 
@@ -633,6 +654,11 @@ async function applySettings() {
   const data = await res.json();
   if (data.ok) {
     settings = data.settings;
+    if ($("selDeviceProfile")?.value === "auto" && $("selEspPort")?.value) {
+      const portRes = await fetch("/api/ports");
+      const portData = await portRes.json();
+      applyPortProfileHint(portData.ports, $("selEspPort").value);
+    }
     toast("ok", data.message || "配置已应用");
   } else {
     toast("error", "保存失败");
@@ -727,6 +753,40 @@ function saveUserObservation() {
   } catch (_) {}
 }
 
+function formatSaveResult(data) {
+  const parts = [];
+  if (data.report_path) parts.push(`报告: ${data.report_path}`);
+  else if (data.directory) parts.push(data.directory);
+  if (data.power?.path) parts.push(`曲线: ${data.power.path} (${data.power.rows || 0} 行)`);
+  if (data.measure?.path) parts.push(`采样: ${data.measure.path} (${data.measure.rows || 0} 行)`);
+  if (data.serial?.path) parts.push(`日志: ${data.serial.path}`);
+  if (!data.power?.path && hubAvailable) {
+    parts.push("提示: 未包含电压/电流曲线，请先点击「测电压/测电流」或运行场景后再保存");
+  }
+  return parts.join("\n");
+}
+
+function esc(s) {
+  const d = document.createElement("div");
+  d.textContent = s == null ? "" : String(s);
+  return d.innerHTML;
+}
+
+function formatAnalysisText(text) {
+  const raw = (text == null ? "" : String(text)).trim();
+  if (!raw || raw === "—") return '<span class="analysis-muted">—</span>';
+  const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+  if (lines.length >= 2 && lines.every((l) => /^\d+[\.\)、]\s*/.test(l))) {
+    const items = lines.map((l) => l.replace(/^\d+[\.\)、]\s*/, ""));
+    return `<ol class="analysis-list">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>`;
+  }
+  if (lines.length >= 2 && lines.every((l) => /^[-*•]\s+/.test(l))) {
+    const items = lines.map((l) => l.replace(/^[-*•]\s+/, ""));
+    return `<ul class="analysis-list">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
+  }
+  return lines.map((l) => `<p class="analysis-para">${esc(l)}</p>`).join("");
+}
+
 function renderFindingCard(f, extraClass = "") {
   const div = document.createElement("div");
   div.className = `finding finding-${f.severity || "info"} ${extraClass}`.trim();
@@ -741,10 +801,10 @@ function renderFindingCard(f, extraClass = "") {
   div.innerHTML = `
     <div class="finding-title"><span class="finding-sev">${esc(sev)}</span> ${esc(f.message || f.title || "")}</div>
     <dl class="finding-detail">
-      <dt>发现来源</dt><dd>${esc(f.source || "—")}</dd>
-      ${logSourceLine ? `<dt>日志来源</dt><dd>${esc(logSourceLine)}</dd>` : ""}
-      <dt>可能原因</dt><dd>${esc(f.likely_cause || "—")}</dd>
-      <dt>建议排查</dt><dd>${esc(f.recommendation || "—")}</dd>
+      <dt>发现来源</dt><dd class="finding-body">${formatAnalysisText(f.source || "—")}</dd>
+      ${logSourceLine ? `<dt>日志来源</dt><dd class="finding-body">${esc(logSourceLine)}</dd>` : ""}
+      <dt>可能原因</dt><dd class="finding-body">${formatAnalysisText(f.likely_cause || "—")}</dd>
+      <dt>建议排查</dt><dd class="finding-body finding-actions">${formatAnalysisText(f.recommendation || "—")}</dd>
       ${logExcerpt ? `<dt>匹配日志</dt><dd class="finding-evidence"><pre class="finding-log-line">${esc(logExcerpt)}</pre></dd>` : ""}
     </dl>`;
   return div;
@@ -754,6 +814,7 @@ function renderAnalysis(data) {
   lastAnalysis = data;
   const summaryEl = $("analysisSummary");
   summaryEl.textContent = data.summary || "";
+  summaryEl.classList.toggle("has-result", !!data.summary);
   summaryEl.dataset.hasResult = data.summary ? "1" : "";
   const aiHint = $("analysisAiHint");
   if (aiHint) {
@@ -852,10 +913,81 @@ function renderAnalysis(data) {
   }
 }
 
-function esc(s) {
-  const d = document.createElement("div");
-  d.textContent = s;
-  return d.innerHTML;
+let analysisProgressTimer = null;
+
+function setAnalysisLoading(loading, opts = {}) {
+  const btn = $("btnAnalyze");
+  const spinner = $("btnAnalyzeSpinner");
+  const label = $("btnAnalyzeLabel");
+  const panel = $("analysisProgress");
+  const bar = $("analysisBarFill");
+  const step = $("analysisStepText");
+  const barWrap = panel?.querySelector(".analysis-bar");
+  const badge = $("analysisBadge");
+
+  if (analysisProgressTimer) {
+    clearInterval(analysisProgressTimer);
+    analysisProgressTimer = null;
+  }
+
+  if (!btn) return;
+
+  if (!loading) {
+    btn.disabled = false;
+    btn.classList.remove("btn-analyzing");
+    if (spinner) spinner.hidden = true;
+    if (label) label.textContent = "智能分析";
+    if (panel) panel.hidden = true;
+    if (bar) {
+      bar.style.width = "0";
+      bar.classList.remove("is-indeterminate");
+    }
+    if (barWrap) barWrap.setAttribute("aria-valuenow", "0");
+    return;
+  }
+
+  const aiOn = opts.aiEnabled !== false && ($("chkAi")?.checked ?? true);
+  const stages = aiOn
+    ? [
+        { pct: 12, text: "正在读取日志与曲线…" },
+        { pct: 32, text: "规则检测中…" },
+        { pct: 55, text: "AI 分析中，请稍候…" },
+        { pct: 78, text: "正在整理诊断结论…" },
+        { pct: 90, text: "等待 AI 响应（可能需 30–60 秒）…" },
+      ]
+    : [
+        { pct: 15, text: "正在读取日志与曲线…" },
+        { pct: 45, text: "规则检测中…" },
+        { pct: 75, text: "正在生成诊断摘要…" },
+        { pct: 90, text: "即将完成…" },
+      ];
+
+  btn.disabled = true;
+  btn.classList.add("btn-analyzing");
+  if (spinner) spinner.hidden = false;
+  if (label) label.textContent = "分析中…";
+  if (panel) panel.hidden = false;
+  if (badge) {
+    badge.textContent = "分析中";
+    badge.className = "status-chip chip-warn";
+  }
+
+  let stageIdx = 0;
+  const applyStage = (idx) => {
+    const s = stages[Math.min(idx, stages.length - 1)];
+    if (bar) {
+      bar.style.width = `${s.pct}%`;
+      bar.classList.add("is-indeterminate");
+    }
+    if (barWrap) barWrap.setAttribute("aria-valuenow", String(s.pct));
+    if (step) step.textContent = s.text;
+  };
+
+  applyStage(0);
+  analysisProgressTimer = setInterval(() => {
+    stageIdx += 1;
+    applyStage(stageIdx);
+  }, aiOn ? 4500 : 2500);
 }
 
 async function runAnalyze() {
@@ -865,33 +997,48 @@ async function runAnalyze() {
     return;
   }
   saveUserObservation();
-  toast("info", "分析中…");
-  const body = {
-    serial: getSerialText(),
-    power: hubAvailable
-      ? powerData.t.map((t, i) => ({ t, v: powerData.v[i], i: powerData.i[i] }))
-      : [],
-    ai_enabled: $("chkAi").checked,
-    ...analysisPayloadExtra(),
-  };
-  const key = $("inpApiKey").value.trim();
-  if (key) body.openai_api_key = key;
-  body.openai_base_url = $("inpApiBase").value.trim();
-  body.openai_model = ($("inpApiModel")?.value || "").trim() || "deepseek-v4-flash";
-  const res = await fetch("/api/analyze", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const data = await res.json();
-  renderAnalysis(data);
-  lastAnalysis = data;
-  if (data.ai_used && data.ai_text) {
-    toast("ok", "分析完成（含 AI 说明）");
-  } else if (data.ai_skip_reason) {
-    toast("warn", `规则分析完成；${data.ai_skip_reason}`);
-  } else {
-    toast("ok", "规则分析完成");
+  const aiOn = $("chkAi").checked;
+  setAnalysisLoading(true, { aiEnabled: aiOn });
+  try {
+    const body = {
+      serial: getSerialText(),
+      power: buildPowerPayload(),
+      ai_enabled: aiOn,
+      ...analysisPayloadExtra(),
+    };
+    const key = $("inpApiKey").value.trim();
+    if (key) body.openai_api_key = key;
+    body.openai_base_url = $("inpApiBase").value.trim();
+    body.openai_model = ($("inpApiModel")?.value || "").trim() || "deepseek-v4-flash";
+    const res = await fetch("/api/analyze", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    const bar = $("analysisBarFill");
+    const barWrap = $("analysisProgress")?.querySelector(".analysis-bar");
+    const step = $("analysisStepText");
+    if (bar) {
+      bar.style.width = "100%";
+      bar.classList.remove("is-indeterminate");
+    }
+    if (barWrap) barWrap.setAttribute("aria-valuenow", "100");
+    if (step) step.textContent = "分析完成";
+    renderAnalysis(data);
+    lastAnalysis = data;
+    if (data.ai_used && data.ai_text) {
+      toast("ok", "分析完成（含 AI 说明）");
+    } else if (data.ai_skip_reason) {
+      toast("warn", `规则分析完成；${data.ai_skip_reason}`);
+    } else {
+      toast("ok", "规则分析完成");
+    }
+    await new Promise((r) => setTimeout(r, 400));
+  } catch (err) {
+    toast("error", "分析失败，请检查网络或服务状态");
+  } finally {
+    setAnalysisLoading(false);
   }
 }
 
@@ -951,9 +1098,13 @@ function connectSocket() {
   socket.on("scenario_progress", (d) => {
     showScenarioProgress(true);
     setScenarioProgress(d.pct || 0, `${d.step}: ${d.detail || ""}`);
+    if (d.step === "analyze") {
+      setAnalysisLoading(true, { aiEnabled: $("chkAi")?.checked });
+    }
   });
 
   socket.on("analysis_result", (data) => {
+    setAnalysisLoading(false);
     lastAnalysis = data;
     renderAnalysis(data);
     showScenarioProgress(false);
@@ -1141,9 +1292,13 @@ function bindUi() {
   };
 
   $("btnRefreshPorts").onclick = async () => {
-    const s = await loadPorts();
-    if (! $("selHubPort").value && s.hub_command_port) $("selHubPort").value = s.hub_command_port;
-    if (! $("selEspPort").value && s.esp32_serial_port) $("selEspPort").value = s.esp32_serial_port;
+    const portData = await loadPorts();
+    const s = portData.suggest || {};
+    if (!$("selHubPort").value && s.hub_command_port) $("selHubPort").value = s.hub_command_port;
+    if (!$("selEspPort").value && s.esp32_serial_port) $("selEspPort").value = s.esp32_serial_port;
+    if ($("selDeviceProfile")?.value === "auto" && $("selEspPort")?.value) {
+      applyPortProfileHint(portData.ports, $("selEspPort").value);
+    }
     toast("ok", "端口列表已刷新");
   };
 
@@ -1197,12 +1352,10 @@ function bindUi() {
 }
 
 function applyPortProfileHint(ports, deviceName) {
-  if (!$("selDeviceProfile") || ($("selDeviceProfile").value && $("selDeviceProfile").value !== "auto")) {
-    return;
-  }
+  if ($("selDeviceProfile")?.value !== "auto") return;
   const port = (ports || []).find((p) => p.device === deviceName);
   if (port?.device_profile_hint) {
-    $("selDeviceProfile").value = port.device_profile_hint;
+    applyAutoDeviceProfile(port.device_profile_hint);
   }
 }
 
@@ -1215,20 +1368,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   await loadDeviceProfiles();
   await loadSettings();
   const portData = await loadPorts();
-  const suggest = portData || {};
+  const suggest = portData.suggest || {};
   if (suggest.hub_command_port && !$("selHubPort").value) {
     $("selHubPort").value = suggest.hub_command_port;
   }
   if (suggest.esp32_serial_port && !$("selEspPort").value) {
     $("selEspPort").value = suggest.esp32_serial_port;
   }
-  if (suggest.device_profile_hint && $("selDeviceProfile")?.value === "auto") {
-    $("selDeviceProfile").value = suggest.device_profile_hint;
+  if ($("selDeviceProfile")?.value === "auto") {
+    if (suggest.device_profile_hint) {
+      applyAutoDeviceProfile(suggest.device_profile_hint);
+    } else if ($("selEspPort")?.value) {
+      applyPortProfileHint(portData.ports, $("selEspPort").value);
+    }
   }
   $("selEspPort")?.addEventListener("change", async () => {
     const res = await fetch("/api/ports");
     const data = await res.json();
     applyPortProfileHint(data.ports, $("selEspPort").value);
+  });
+  $("selDeviceProfile")?.addEventListener("change", async () => {
+    if ($("selDeviceProfile").value === "auto" && $("selEspPort")?.value) {
+      const res = await fetch("/api/ports");
+      const data = await res.json();
+      applyPortProfileHint(data.ports, $("selEspPort").value);
+    }
   });
   updateGauges(null, null);
 });

@@ -402,10 +402,34 @@ def save_bundle(
     }
 
 
+def _append_report_field(lines: list[str], label: str, text: str) -> None:
+    body = (text or "").strip() or "—"
+    lines.append(f"**{label}**")
+    lines.append("")
+    for block in re.split(r"\n\s*\n", body):
+        block = block.strip()
+        if not block:
+            continue
+        if re.search(r"^\d+[\.、\)]\s", block, re.MULTILINE):
+            for line in block.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                if re.match(r"^\d+[\.、\)]\s", line):
+                    lines.append(re.sub(r"^(\d+)[\.、\)]\s*", r"\1. ", line))
+                else:
+                    lines.append(line)
+        else:
+            lines.append(block)
+        lines.append("")
+
+
 def _format_report_markdown(
     analysis: dict[str, Any],
     meta: dict[str, Any],
+    attachments: Optional[dict[str, Any]] = None,
 ) -> str:
+    att = attachments or {}
     lines = [
         "# Power Lab 诊断报告",
         "",
@@ -426,14 +450,7 @@ def _format_report_markdown(
             lines.extend([pbrief, ""])
     user_obs = (analysis.get("user_observation") or "").strip()
     if user_obs:
-        lines.extend(
-            [
-                "## 用户现场描述",
-                "",
-                user_obs,
-                "",
-            ]
-        )
+        lines.extend(["## 用户现场描述", "", user_obs, ""])
     lines.extend(
         [
             "## 诊断摘要",
@@ -461,18 +478,15 @@ def _format_report_markdown(
     lines.append("## 异常发现")
     lines.append("")
     if ai_struct:
-        lines.extend(
-            [
-                f"### AI 分析 · {ai_struct.get('title', '结论')}",
-                "",
-                f"- **发现来源：** {ai_struct.get('source', '—')}",
-                f"- **可能原因：** {ai_struct.get('likely_cause', '—')}",
-                f"- **建议排查：** {ai_struct.get('recommendation', '—')}",
-            ]
-        )
+        lines.extend([f"### AI 分析 · {ai_struct.get('title', '结论')}", ""])
+        _append_report_field(lines, "发现来源", ai_struct.get("source", "—"))
+        _append_report_field(lines, "可能原因", ai_struct.get("likely_cause", "—"))
+        _append_report_field(lines, "建议排查", ai_struct.get("recommendation", "—"))
         if ai_struct.get("evidence"):
-            lines.append(f"- **依据片段：** {ai_struct['evidence']}")
-        lines.append("")
+            lines.append("**依据片段**")
+            lines.append("")
+            lines.append(f"```\n{ai_struct['evidence']}\n```")
+            lines.append("")
         if findings:
             lines.append("### 规则检出参考")
             lines.append("")
@@ -482,39 +496,38 @@ def _format_report_markdown(
     if findings:
         for i, f in enumerate(findings, 1):
             sev = f.get("severity_label") or f.get("severity", "")
-            lines.extend(
-                [
-                    f"### {i}. [{sev}] {f.get('message', '')}",
-                    "",
-                    f"- **发现来源：** {f.get('source', '—')}",
-                    f"- **可能原因：** {f.get('likely_cause', '—')}",
-                    f"- **建议排查：** {f.get('recommendation', '—')}",
-                ]
-            )
+            lines.extend([f"### {i}. [{sev}] {f.get('message', '')}", ""])
+            _append_report_field(lines, "发现来源", f.get("source", "—"))
+            _append_report_field(lines, "可能原因", f.get("likely_cause", "—"))
+            _append_report_field(lines, "建议排查", f.get("recommendation", "—"))
             if f.get("evidence"):
-                lines.append(f"- **依据片段：** `{f['evidence']}`")
-            lines.append("")
+                lines.append("**依据片段**")
+                lines.append("")
+                lines.append(f"```\n{f['evidence']}\n```")
+                lines.append("")
 
     if analysis.get("ai_text") and ai_struct:
         lines.extend(["## 完整 AI 回复", "", analysis["ai_text"], ""])
     elif analysis.get("ai_text"):
         lines.extend(["## AI 补充说明", "", analysis["ai_text"], ""])
 
-    lines.extend(
-        [
-            "## 附件说明",
-            "",
-            "本目录同时包含原始数据，便于复核：",
-            "",
-            "| 文件 | 内容 |",
-            "|------|------|",
-            "| `*_power.csv` | 电压/电流曲线采样 |",
-            "| `*_measure.csv` | 单次测电压/测电流记录（如有） |",
-            "| `*_serial.log` | 完整串口日志 |",
-            "| `analysis.json` | 结构化分析结果 |",
-            "",
-        ]
-    )
+    lines.extend(["## 附件说明", "", "本目录包含以下文件：", "", "| 文件 | 内容 |", "|------|------|"])
+    power = att.get("power")
+    measure = att.get("measure")
+    serial = att.get("serial")
+    if power:
+        name = Path(power["path"]).name
+        lines.append(f"| `{name}` | 电压/电流曲线采样（{power.get('rows', 0)} 行） |")
+    else:
+        lines.append("| — | 本次未导出曲线（需连接 Hub 并开始电压/电流采集） |")
+    if measure:
+        name = Path(measure["path"]).name
+        lines.append(f"| `{name}` | 单次测电压/测电流记录（{measure.get('rows', 0)} 行） |")
+    if serial:
+        name = Path(serial["path"]).name
+        lines.append(f"| `{name}` | 完整串口日志（{serial.get('chars', 0)} 字符） |")
+    lines.append("| `analysis.json` | 结构化分析结果 |")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -530,12 +543,6 @@ def save_diagnosis_report(
     bundle_dir, stamp = _new_bundle_dir("report")
     meta = _meta(settings)
     meta["report_generated_at"] = meta["saved_at"]
-
-    report_path = bundle_dir / f"{stamp}_report.md"
-    report_path.write_text(
-        _format_report_markdown(analysis, meta),
-        encoding="utf-8",
-    )
 
     (bundle_dir / "analysis.json").write_text(
         json.dumps(
@@ -563,6 +570,16 @@ def save_diagnosis_report(
         save_measure_csv(measures, settings, bundle_dir, stamp)
         if measures
         else None
+    )
+
+    report_path = bundle_dir / f"{stamp}_report.md"
+    report_path.write_text(
+        _format_report_markdown(
+            analysis,
+            meta,
+            attachments={"power": power, "serial": serial, "measure": measure},
+        ),
+        encoding="utf-8",
     )
 
     return {

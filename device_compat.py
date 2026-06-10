@@ -14,27 +14,27 @@ DEVICE_PROFILES: dict[str, dict[str, str]] = {
         "hint": "根据 COM 口描述与日志内容推断芯片系列",
     },
     "xiao_esp32": {
-        "label": "XIAO ESP32（S3 / C3 / C5 / C6）",
+        "label": "ESP32（S3 / C3 / C5 / C6）",
         "hint": "Espressif ESP-IDF / Arduino-ESP32 日志",
     },
     "xiao_samd21": {
-        "label": "XIAO SAMD21",
+        "label": "SAMD21",
         "hint": "Microchip SAMD21 · Arduino 框架",
     },
     "xiao_rp2040": {
-        "label": "XIAO RP2040 / RP2350",
+        "label": "RP2040 / RP2350",
         "hint": "Raspberry Pi Pico SDK / MicroPython / Arduino-Pico",
     },
     "xiao_nrf52": {
-        "label": "XIAO nRF52840 / nRF54L15",
+        "label": "nRF52840 / nRF54L15",
         "hint": "Nordic nRF Connect SDK / Arduino-nRF52",
     },
     "xiao_ra4m1": {
-        "label": "XIAO RA4M1",
+        "label": "RA4M1",
         "hint": "Renesas RA4M1 · Arduino / FSP",
     },
     "xiao_mg24": {
-        "label": "XIAO MG24",
+        "label": "EFR32 MG24",
         "hint": "Silicon Labs EFR32 · Matter / Zigbee / Thread",
     },
     "generic": {
@@ -175,6 +175,42 @@ _SERIAL_PORT_HINTS = (
     "2341",  # Arduino
 )
 
+_BRIDGE_ONLY_RE = re.compile(
+    r"CH340|CH343|CH910|CH341|CP210|FTDI|PL2303|USB-Enhanced-SERIAL|USB SERIAL CONVERTER",
+    re.IGNORECASE,
+)
+
+_MCU_PORT_MARKERS = (
+    "ESP32", "ESP", "SAMD", "RP2040", "RP2350", "PICO", "NRF52", "NRF54",
+    "RA4M1", "MG24", "EFR32", "XIAO", "SEEED", "JTAG", "303A", "2E8A", "2886",
+)
+
+
+def _port_text(port: Any) -> str:
+    return (
+        f"{getattr(port, 'description', '')} "
+        f"{getattr(port, 'manufacturer', '') or ''} "
+        f"{getattr(port, 'hwid', '')}"
+    )
+
+
+def bridge_chip_name(port: Any) -> str:
+    text = _port_text(port)
+    for name in ("CH343", "CH340", "CH910", "CH341", "CP210", "FTDI", "PL2303"):
+        if re.search(name, text, re.IGNORECASE):
+            return name
+    if _BRIDGE_ONLY_RE.search(text):
+        return "USB 转串口"
+    return ""
+
+
+def is_bridge_only_port(port: Any) -> bool:
+    text = _port_text(port).upper()
+    if any(marker in text for marker in _MCU_PORT_MARKERS):
+        return False
+    return bool(_BRIDGE_ONLY_RE.search(text))
+
+
 _PROFILE_DETECT_FROM_TEXT: list[tuple[str, str]] = [
     ("xiao_esp32", r"ESP-ROM:|boot: ESP-IDF|rst:0x|Guru Meditation|ESP_ERROR_CHECK"),
     ("xiao_rp2040", r"\*\*\* PANIC \*\*\*|CPU:\s|MPY:|Pico SDK"),
@@ -195,11 +231,29 @@ _PROFILE_DETECT_FROM_PORT: list[tuple[str, str]] = [
 
 
 def public_device_profiles() -> list[dict[str, str]]:
-    return [{"id": k, **v} for k, v in DEVICE_PROFILES.items()]
+    items: list[dict[str, str]] = []
+    for key, meta in DEVICE_PROFILES.items():
+        row = {"id": key, **meta}
+        if key != "auto":
+            row["chip_label"] = meta["label"]
+        items.append(row)
+    return items
+
+
+def chip_label(profile: str) -> str:
+    """按芯片系列展示名称（不含 XIAO 等品牌前缀）。"""
+    key = (profile or "").strip()
+    if not key or key == "auto":
+        return ""
+    if key not in DEVICE_PROFILES:
+        return DEVICE_PROFILES["generic"]["label"]
+    return DEVICE_PROFILES[key]["label"]
 
 
 def profile_label(profile: str) -> str:
-    return DEVICE_PROFILES.get(profile, DEVICE_PROFILES["generic"])["label"]
+    if profile == "auto":
+        return DEVICE_PROFILES["auto"]["label"]
+    return chip_label(profile)
 
 
 def normalize_device_profile(value: str | None) -> str:
@@ -247,6 +301,37 @@ def resolve_device_profile(
             if re.search(pattern, port_hint, re.IGNORECASE):
                 return prof
     return "generic"
+
+
+def auto_detect_status(
+    profile: str,
+    *,
+    port: Any = None,
+    port_hint: str = "",
+    serial_text: str = "",
+) -> dict[str, str]:
+    normalized = normalize_device_profile(profile)
+    if normalized != "auto":
+        return {"state": "manual", "resolved": normalized, "message": ""}
+
+    from_log = detect_device_profile_from_text(serial_text)
+    from_port = suggest_device_profile_from_port(port) if port else None
+    hint_text = port_hint or (_port_text(port) if port else "")
+    resolved = resolve_device_profile("auto", serial_text, hint_text or None)
+
+    if from_log or from_port:
+        return {"state": "detected", "resolved": resolved, "message": ""}
+
+    if serial_text.strip():
+        return {"state": "detected", "resolved": resolved, "message": ""}
+
+    if port and is_bridge_only_port(port):
+        return {"state": "wait_log", "resolved": "", "message": ""}
+
+    if hint_text.strip():
+        return {"state": "wait_log", "resolved": "", "message": ""}
+
+    return {"state": "pending", "resolved": "", "message": ""}
 
 
 def get_log_patterns(resolved_profile: str) -> list[LogPattern]:

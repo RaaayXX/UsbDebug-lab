@@ -20,8 +20,12 @@ import hub_common  # noqa: F401 — 应用 SmartUSBHub 补丁
 from smartusbhub import SmartUSBHub
 
 from device_compat import (
+    auto_detect_status,
     is_likely_serial_device,
+    chip_label,
+    normalize_device_profile,
     public_device_profiles,
+    resolve_device_profile,
     suggest_device_profile_from_port,
 )
 from hub_common import ROOT
@@ -67,6 +71,7 @@ def list_all_ports() -> list[dict[str, str]]:
         vid = f"{p.vid:04X}" if p.vid is not None else ""
         pid = f"{p.pid:04X}" if p.pid is not None else ""
         is_hub = p.vid == 0x1A86 and p.pid == 0xFE0C
+        profile_hint = suggest_device_profile_from_port(p) or ""
         items.append(
             {
                 "device": p.device,
@@ -77,7 +82,8 @@ def list_all_ports() -> list[dict[str, str]]:
                 "is_hub_command": is_hub,
                 "is_likely_esp32": is_likely_serial_device(p, is_hub),
                 "is_likely_device": is_likely_serial_device(p, is_hub),
-                "device_profile_hint": suggest_device_profile_from_port(p) or "",
+                "device_profile_hint": profile_hint,
+                "device_profile_chip_hint": chip_label(profile_hint) if profile_hint else "",
             }
         )
     return items
@@ -100,11 +106,18 @@ def suggest_ports(ports: list[dict[str, str]]) -> dict[str, str]:
             "",
         )
     profile = ""
+    chip = ""
     for p in ports:
         if p.get("device") == dev and p.get("device_profile_hint"):
             profile = p["device_profile_hint"]
+            chip = p.get("device_profile_chip_hint") or chip_label(profile)
             break
-    return {"hub_command_port": hub, "esp32_serial_port": dev, "device_profile_hint": profile}
+    return {
+        "hub_command_port": hub,
+        "esp32_serial_port": dev,
+        "device_profile_hint": profile,
+        "device_profile_chip_hint": chip,
+    }
 
 
 def _device_log_port_label() -> str:
@@ -247,6 +260,7 @@ class MonitorSession:
         self._serial_handle: Optional[serial.Serial] = None
         self._vi_thread: Optional[threading.Thread] = None
         self.power_samples: list[dict[str, Any]] = []
+        self.measure_history: list[dict[str, Any]] = []
         self.serial_full: str = ""
         self.vi_run_dir: Optional[Path] = None
         self.log_run_dir: Optional[Path] = None
@@ -471,8 +485,7 @@ class MonitorSession:
             if self.i_sampling:
                 sample["i"] = i_raw
                 store["i"] = i_raw
-            self.power_samples.append(store)
-            socketio.emit("power_sample", sample)
+            _push_power_sample(sample)
             i = i_raw if self.i_sampling else None
             if i is not None and i <= threshold and (t_ms - last_reboot_ms) >= 200:
                 last_reboot_ms = t_ms
@@ -563,6 +576,62 @@ def _ensure_log_capture_started() -> bool:
 
 _session = MonitorSession()
 _status_thread_started = False
+
+
+def _append_measure_snapshot(
+    t_ms: int,
+    v: Optional[int],
+    i: Optional[int],
+    *,
+    kind: str = "both",
+    cycle: Optional[int] = None,
+) -> None:
+    ch = int(get_settings().get("hub_dut_channel", 1))
+    row: dict[str, Any] = {
+        "at": datetime.now().isoformat(timespec="milliseconds"),
+        "kind": kind,
+        "channel": ch,
+        "t_ms": t_ms,
+    }
+    if v is not None:
+        row["v_mV"] = v
+        row["v"] = v
+    if i is not None:
+        row["i_mA"] = i
+        row["i"] = i
+    if cycle is not None:
+        row["cycle"] = cycle
+    _session.measure_history.append(row)
+    if len(_session.measure_history) > 500:
+        _session.measure_history.pop(0)
+    socketio.emit("hub_measure_result", row)
+
+
+def _push_power_sample(sample: dict[str, Any]) -> None:
+    store: dict[str, Any] = {"t": sample.get("t")}
+    if "v" in sample:
+        store["v"] = sample.get("v")
+    if "i" in sample:
+        store["i"] = sample.get("i")
+    if sample.get("at"):
+        store["at"] = sample["at"]
+    _session.power_samples.append(store)
+    socketio.emit("power_sample", sample)
+    if sample.get("snapshot"):
+        v = sample.get("v")
+        i = sample.get("i")
+        kind = "both"
+        if v is not None and i is None:
+            kind = "voltage"
+        elif i is not None and v is None:
+            kind = "current"
+        _append_measure_snapshot(
+            int(sample.get("t") or 0),
+            v,
+            i,
+            kind=kind,
+            cycle=sample.get("cycle"),
+        )
 
 
 def hub_available(ports: Optional[list[dict[str, str]]] = None) -> bool:
@@ -696,7 +765,33 @@ def build_device_status() -> dict[str, Any]:
     ):
         v, i = _hub.read_sample()
 
+    device_profile = normalize_device_profile(s.get("device_profile"))
+    port_hint = ""
+    port_obj = None
+    for p in serial.tools.list_ports.comports():
+        if p.device == esp_port:
+            port_obj = p
+            port_hint = f"{p.description or ''} {p.hwid or ''}".strip()
+            break
+    if not port_obj and esp_port:
+        for p in ports:
+            if p["device"] == esp_port:
+                port_hint = f"{p.get('description', '')} {p.get('hwid', '')}".strip()
+                break
+    serial_preview = _session.serial_full[-8000:] if _session.serial_full else ""
+    auto = auto_detect_status(
+        device_profile,
+        port=port_obj,
+        port_hint=port_hint,
+        serial_text=serial_preview,
+    )
+
     return {
+        "device_profile": device_profile,
+        "device_profile_resolved": auto.get("resolved") or "",
+        "device_profile_auto_state": auto.get("state") or "",
+        "device_profile_auto_message": auto.get("message") or "",
+        "device_profile_chip": chip_label(auto["resolved"]) if auto.get("resolved") else "",
         "hub_connected": _hub.hub is not None and _hub.link_ok,
         "hub_link_ok": _hub.link_ok,
         "hub_available": hub_ok,
@@ -971,15 +1066,14 @@ def _run_usb_cycle_scenario(data: Optional[dict] = None) -> None:
 
                 v0, i0 = _hub.read_sample()
                 if plug_t is not None and (v0 is not None or i0 is not None):
-                    socketio.emit(
-                        "power_sample",
+                    _push_power_sample(
                         {
                             "t": plug_t,
                             "v": v0,
                             "i": i0,
                             "snapshot": True,
                             "cycle": cycle,
-                        },
+                        }
                     )
                 msg = _plug_toast_message(mode, v0, i0)
                 socketio.emit(
@@ -1180,8 +1274,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
 
                 v_cut, i_cut = _hub.read_sample()
                 if cut_t is not None and (v_cut is not None or i_cut is not None):
-                    socketio.emit(
-                        "power_sample",
+                    _push_power_sample(
                         {
                             "t": cut_t,
                             "v": v_cut,
@@ -1189,7 +1282,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
                             "snapshot": True,
                             "cycle": cycle,
                             "phase": "battery_cut",
-                        },
+                        }
                     )
                 socketio.emit(
                     "toast",
@@ -1219,8 +1312,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
 
                 v_rst, i_rst = _hub.read_sample()
                 if restore_t is not None and (v_rst is not None or i_rst is not None):
-                    socketio.emit(
-                        "power_sample",
+                    _push_power_sample(
                         {
                             "t": restore_t,
                             "v": v_rst,
@@ -1228,7 +1320,7 @@ def _run_battery_only_scenario(data: Optional[dict] = None) -> None:
                             "snapshot": True,
                             "cycle": cycle,
                             "phase": "vbus_restore",
-                        },
+                        }
                     )
                 socketio.emit(
                     "toast",
@@ -1459,10 +1551,20 @@ def api_hub_disconnect() -> Any:
     return jsonify({"ok": True})
 
 
+def _useful_power_samples(samples: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [s for s in samples if s.get("v") is not None or s.get("i") is not None]
+
+
 def _power_from_request(body: dict) -> list[dict[str, Any]]:
-    if body.get("power"):
-        return list(body["power"])
-    return list(_session.power_samples)
+    session = _useful_power_samples(_session.power_samples)
+    if "power" not in body:
+        return session
+    client = _useful_power_samples(list(body.get("power") or []))
+    if not client:
+        return session
+    if not session:
+        return client
+    return client if len(client) >= len(session) else session
 
 
 def _serial_from_request(body: dict) -> str:
@@ -1470,7 +1572,9 @@ def _serial_from_request(body: dict) -> str:
 
 
 def _recording_t0() -> Optional[float]:
-    return _session.vi_t0 if _session.vi_running and _session.vi_t0 else None
+    if _session.vi_t0:
+        return _session.vi_t0
+    return None
 
 
 def _chart_t0(body: dict) -> Optional[float]:
@@ -1484,8 +1588,13 @@ def _chart_t0(body: dict) -> Optional[float]:
 
 
 def _measures_from_request(body: dict) -> list[dict[str, Any]]:
-    raw = body.get("measures")
-    return list(raw) if raw else []
+    client = list(body.get("measures") or [])
+    server = list(_session.measure_history)
+    if not client:
+        return server
+    if not server:
+        return client
+    return client if len(client) >= len(server) else server
 
 
 def _export_fields(body: dict) -> list[str]:

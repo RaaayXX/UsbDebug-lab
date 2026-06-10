@@ -334,6 +334,7 @@ body.guide-open { overflow: hidden; }
   background: #fff;
 }
 .field-sm select { min-width: 72px; }
+.field-device-profile select { min-width: 168px; }
 .check-line {
   display: flex;
   align-items: flex-start;
@@ -814,8 +815,18 @@ body.guide-open { overflow: hidden; }
 .chip-ok { background: rgba(45,138,102,0.1); color: var(--ok); }
 .chip-warn { background: rgba(184,134,11,0.1); color: var(--warn); }
 .chip-crit { background: rgba(196,92,92,0.1); color: var(--crit); }
-.analysis-lead { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; }
-.findings { display: flex; flex-direction: column; gap: 8px; }
+.analysis-lead { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.55; }
+.analysis-lead.has-result {
+  font-size: 0.95rem;
+  color: var(--text);
+  background: var(--surface-muted, #f4f4f5);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent, #3b82f6);
+  border-radius: var(--radius-sm, 8px);
+  padding: 12px 14px;
+  margin-bottom: 14px;
+}
+.findings { display: flex; flex-direction: column; gap: 12px; }
 .hint-empty { text-align: center; padding: 20px; color: var(--text-tertiary); font-size: 0.85rem; }
 .analysis-head-tools {
   display: flex;
@@ -861,6 +872,71 @@ body.guide-open { overflow: hidden; }
   margin: 8px 0 12px;
 }
 .card-analysis .analysis-input .btn-block { margin-top: 0; }
+.btn-analyze-inner {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+.btn-spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255, 255, 255, 0.35);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin 0.75s linear infinite;
+  flex-shrink: 0;
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+.btn-analyzing {
+  pointer-events: none;
+  opacity: 0.88;
+}
+.analysis-progress {
+  margin-top: 12px;
+  padding: 12px 14px;
+  background: var(--surface-muted, #f4f4f5);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm, 8px);
+}
+.analysis-bar {
+  height: 5px;
+  background: rgba(28, 28, 30, 0.08);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.analysis-bar-fill {
+  height: 100%;
+  width: 0;
+  background: linear-gradient(90deg, var(--accent-v, #4a7c9b), var(--accent-i, #5a8f7b));
+  border-radius: 3px;
+  transition: width 0.45s ease;
+  position: relative;
+}
+.analysis-bar-fill.is-indeterminate::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.45) 50%,
+    transparent 100%
+  );
+  animation: analysis-shimmer 1.2s ease-in-out infinite;
+}
+@keyframes analysis-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
+}
+.analysis-step-text {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin: 8px 0 0;
+  line-height: 1.45;
+}
 
 .card-project .section-desc { margin-bottom: 12px; }
 .form-grid-project { margin-bottom: 12px; }
@@ -940,59 +1016,87 @@ body.hub-unavailable .card-analysis { order: 1; }
 }
 
 .finding {
-  padding: 12px 14px; border-radius: var(--radius-sm);
-  font-size: 0.85rem; border: 1px solid var(--border); background: var(--surface-muted);
+  padding: 14px 16px;
+  border-radius: var(--radius-sm, 8px);
+  font-size: 0.88rem;
+  border: 1px solid var(--border);
+  background: var(--surface-2, #fafafa);
 }
 .finding-critical { border-left: 3px solid var(--crit); }
 .finding-warning { border-left: 3px solid var(--warn); }
 .finding-info { border-left: 3px solid var(--accent-v); }
-.finding-ai-primary { border-left: 3px solid var(--accent, #2563eb); }
+.finding-ai-primary {
+  border-left: 3px solid var(--accent, #2563eb);
+  background: color-mix(in srgb, var(--accent, #2563eb) 4%, var(--surface-2, #fafafa));
+}
 .findings-ref {
   margin-top: 4px;
   font-size: 0.82rem;
   color: var(--text-secondary);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm, 8px);
+  padding: 8px 12px;
 }
 .findings-ref summary {
   cursor: pointer;
   user-select: none;
   padding: 6px 0;
+  font-weight: 500;
 }
-.findings-nested { margin-top: 8px; }
-.finding-title { font-weight: 600; font-size: 0.875rem; margin-bottom: 8px; }
+.findings-nested { margin-top: 10px; gap: 10px; }
+.finding-title { font-weight: 600; font-size: 0.92rem; margin-bottom: 10px; line-height: 1.45; }
 .finding-sev {
   display: inline-block;
-  font-size: 0.6875rem;
+  font-size: 0.68rem;
   font-weight: 600;
-  padding: 2px 6px;
+  padding: 2px 7px;
   border-radius: 4px;
-  background: rgba(28, 28, 30, 0.06);
+  background: rgba(37, 99, 235, 0.1);
+  color: var(--accent, #2563eb);
   margin-right: 6px;
+  vertical-align: middle;
 }
 .finding-detail {
   margin: 0;
-  font-size: 0.8125rem;
-  color: var(--text-secondary);
+  display: grid;
+  gap: 10px;
+  font-size: 0.88rem;
+  color: var(--text);
 }
 .finding-detail dt {
   font-weight: 600;
-  color: var(--text-tertiary);
-  font-size: 0.6875rem;
+  color: var(--text-secondary);
+  font-size: 0.72rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
-  margin-top: 6px;
+  margin: 0;
 }
-.finding-detail dt:first-child { margin-top: 0; }
-.finding-detail dd { margin: 2px 0 0 0; line-height: 1.45; }
-.finding-evidence {
-  font-family: var(--mono);
-  font-size: 0.75rem;
-  color: var(--text-tertiary);
-  word-break: break-all;
+.finding-detail dd { margin: 4px 0 0 0; line-height: 1.55; }
+.finding-body .analysis-para { margin: 0 0 6px; }
+.finding-body .analysis-para:last-child { margin-bottom: 0; }
+.finding-actions { color: var(--text); }
+.analysis-list {
+  margin: 4px 0 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
 }
+.analysis-list li { line-height: 1.5; }
+.analysis-muted { color: var(--text-tertiary); }
+.finding-evidence { margin-top: 2px; }
 .finding-log-line {
   margin: 0;
+  padding: 8px 10px;
+  background: #1e1e1e;
+  color: #d4d4d4;
+  border-radius: 6px;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   word-break: break-word;
+  overflow-x: auto;
 }
 .finding-meta { font-family: var(--mono); font-size: 0.72rem; color: var(--text-tertiary); margin-top: 6px; }
 

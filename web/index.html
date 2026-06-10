@@ -72,9 +72,9 @@
           <span>设备日志口</span>
           <select id="selEspPort"><option value="">— 请选择 —</option></select>
         </label>
-        <label class="field">
+        <label class="field field-device-profile">
           <span>设备类型</span>
-          <select id="selDeviceProfile" title="影响规则分析所匹配的日志关键字；自动识别将根据 COM 描述与日志内容推断">
+          <select id="selDeviceProfile" title="选「自动识别」将根据 COM 描述与串口日志自动切换为对应芯片类型">
             <option value="auto">自动识别</option>
           </select>
         </label>
@@ -286,7 +286,18 @@
             ></textarea>
           </label>
           <p id="observationHint" class="observation-hint hub-only">填写后将与当前串口日志、电压/电流曲线一并参与规则检测与 AI 分析。</p>
-          <button type="button" id="btnAnalyze" class="btn btn-fill btn-block">智能分析</button>
+          <button type="button" id="btnAnalyze" class="btn btn-fill btn-block">
+            <span class="btn-analyze-inner">
+              <span id="btnAnalyzeSpinner" class="btn-spinner" hidden aria-hidden="true"></span>
+              <span id="btnAnalyzeLabel">智能分析</span>
+            </span>
+          </button>
+          <div id="analysisProgress" class="analysis-progress" hidden aria-live="polite">
+            <div class="analysis-bar" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+              <div id="analysisBarFill" class="analysis-bar-fill"></div>
+            </div>
+            <p id="analysisStepText" class="analysis-step-text">分析中…</p>
+          </div>
         </div>
         <p id="analysisSummary" class="analysis-lead">填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将导出诊断报告及串口日志。</p>
         <p id="analysisAiHint" class="analysis-ai-hint" hidden></p>

@@ -14,6 +14,7 @@ from typing import Any, Optional
 
 from device_compat import (
     log_origin_label,
+    chip_label,
     profile_label,
     resolve_device_profile,
     get_log_patterns,
@@ -371,7 +372,7 @@ def analyze_serial_log(
         "warn_lines": 0,
         "device_profile": device_profile or "auto",
         "device_profile_resolved": resolved,
-        "device_profile_label": profile_label(resolved),
+        "device_profile_label": chip_label(resolved) or profile_label(resolved),
     }
 
     if not text.strip():
@@ -553,7 +554,9 @@ def _product_context_block(cfg: dict[str, Any]) -> str:
     if profile == "auto" and not cfg.get("device_profile_resolved"):
         resolved = resolve_device_profile(profile, cfg.get("serial_preview") or "", cfg.get("port_hint"))
     lines = [f"测试工具：{mode_label}"]
-    lines.append(f"设备类型：{profile_label(resolved)}（配置：{profile_label(profile)}）")
+    resolved_label = chip_label(resolved) or profile_label(resolved)
+    config_label = profile_label(profile) if profile == "auto" else chip_label(profile)
+    lines.append(f"设备类型：{resolved_label}（配置：{config_label}）")
     if name:
         lines.append(f"产品名称：{name}")
     lines.append(f"产品介绍：{brief if brief else '（未填写，请仅依据日志与现象分析）'}")
