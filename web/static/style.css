@@ -1074,17 +1074,31 @@ body.hub-unavailable .card-analysis { order: 1; }
 .finding-detail dd { margin: 4px 0 0 0; line-height: 1.55; }
 .finding-body .analysis-para { margin: 0 0 6px; }
 .finding-body .analysis-para:last-child { margin-bottom: 0; }
+.finding-body .analysis-para-block {
+  line-height: 1.6;
+  color: var(--text-secondary);
+}
 .finding-actions { color: var(--text); }
+.finding-actions .analysis-list { margin-top: 0; }
 .analysis-list {
-  margin: 4px 0 0;
-  padding-left: 1.25rem;
+  margin: 6px 0 0;
+  padding-left: 1.4em;
+  font-size: 0.88rem;
+  color: var(--text);
+  list-style-position: outside;
+}
+.analysis-list li {
+  line-height: 1.55;
+  margin-bottom: 8px;
+}
+.analysis-list li:last-child { margin-bottom: 0; }
+.analysis-muted { color: var(--text-tertiary); }
+.finding-evidence { margin-top: 2px; }
+.finding-evidence-lines {
   display: flex;
   flex-direction: column;
   gap: 6px;
 }
-.analysis-list li { line-height: 1.5; }
-.analysis-muted { color: var(--text-tertiary); }
-.finding-evidence { margin-top: 2px; }
 .finding-log-line {
   margin: 0;
   padding: 8px 10px;

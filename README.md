@@ -1,15 +1,19 @@
-# Power Lab — Seeed XIAO 与 SmartUSB Hub 调试工具
+# USBDebug Lab
 
-Power Lab 提供 **Web 仪表盘** 与 **命令行工具**，面向固件体验测试与 Bug 定位：可仅看串口日志 + 描述现象做 AI/规则分析，也可接入 SmartUSB Hub 做供电与插拔场景测试。**主要兼容 Seeed Studio XIAO 全系列**（ESP32 / SAMD21 / RP2040 / nRF52 / RA4M1 / MG24 等），亦支持其他 USB 串口日志设备。
+本地 Web 调试平台：采集被测设备串口日志，可选接入 SmartUSB Hub 采集电气数据，通过规则引擎与 AI 生成诊断报告。
 
-## 功能概览
+规则分析按芯片平台匹配日志语法（ESP32、SAMD21、RP2040 等）；串口监测与 Hub 电气测试适用于任意 USB 串口设备。
 
-| 方式 | 适用场景 |
-|------|----------|
-| Web 仪表盘（推荐） | 可视化监测、自动化插拔场景、规则/AI 分析、数据导出 |
-| 命令行脚本 | 脚本化批处理、无图形界面环境 |
+> **测试状态**：当前仅在 **ESP32-S3** 实机验证。其他芯片平台规则为通用匹配，未经完整测试。使用中若有问题，欢迎通过 [GitHub Issues](https://github.com/RaaayXX/UsbDebug-lab/issues) 反馈。
 
-完整 Web 操作说明见 **[docs/Web仪表盘使用指南.md](docs/Web仪表盘使用指南.md)**；启动服务后亦可点击页面右上角 **「使用指南」** 查阅。
+## 功能
+
+| 方式 | 说明 |
+|------|------|
+| Web 仪表盘（推荐） | 串口监测、Hub 控制、测试场景、规则/AI 分析、数据导出 |
+| 命令行 `esp32_hub_test.py` | 无图形界面下的串口日志与 Hub 采样 |
+
+Web 操作详见 **[docs/Web仪表盘使用指南.md](docs/Web仪表盘使用指南.md)**；启动服务后亦可点击页面 **使用指南**。
 
 ## 安装
 
@@ -19,34 +23,24 @@ python -m venv venv
 .\venv\Scripts\python.exe -m pip install -r requirements.txt
 ```
 
-PowerShell 下激活虚拟环境：`.\venv\Scripts\Activate.ps1`。若执行策略限制脚本运行：
-
-```powershell
-Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
-```
-
-## 启动 Web 仪表盘
+## 启动
 
 ```powershell
 .\venv\Scripts\python.exe dashboard_server.py
 ```
 
-浏览器访问：**http://127.0.0.1:8765**
+浏览器访问 **http://127.0.0.1:8765**（须通过服务地址打开，不可直接打开 `web/index.html`）。
 
-请在服务启动后通过上述地址打开页面，不要直接打开本地 `web/index.html` 文件。
+### Web 能力摘要
 
-### Web 端主要能力
-
-- 测试项目：产品背景本地保存；识别到 Hub 时自动启用电气与场景功能  
-- 连接配置：**应用并连接** 打开串口（Hub 模式另连 Hub）；顶部状态条显示连接与采集情况  
-- 实时电压/电流仪表与曲线（测电压/电流或场景时自动采集）  
-- Hub 快捷指令与自动化测试场景  
-- 串口实时显示；日志区可单独开始/停止录制并导出（含时间戳）  
-- 规则检测与可选 AI 分析  
+| 模块 | 无 Hub | 有 Hub |
+|------|--------|--------|
+| 设置、串口输出、智能分析 | ✓ | ✓ |
+| 电压 · 电流、快捷指令、测试场景 | — | ✓ |
 
 配置保存在本机 `user_settings.json`。
 
-## 命令行工具（可选）
+## 命令行（可选）
 
 ```powershell
 .\venv\Scripts\python.exe esp32_hub_test.py serial-only
@@ -57,19 +51,25 @@ Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
 | 子命令 | 说明 |
 |--------|------|
-| `serial-only` | 仅串口日志（无 Hub） |
-| `monitor` | 电流采样 CSV + 串口 |
+| `serial-only` | 仅串口日志 |
+| `monitor` | 电流采样 + 串口 |
 | `boot-log` | 断电上电后抓取启动日志 |
-| `reboot` | 硬重启一轮 |
+| `reboot` | Hub 硬重启一轮 |
 
-## 接线参考
+在 `config.yaml` 中启用 `flash.enabled` 时，`monitor` 可同步调用 esptool 烧录固件，**仅支持 Espressif ESP32**（默认 `esp32s3`）。其他芯片请使用各自官方烧录工具。
+
+## Hub 接线
 
 ```
 PC ── SmartUSB Hub USB 上行口
-PC ── SmartUSB Hub 指令控制口
-Hub 被测通道 ── 被测开发板（如 Seeed XIAO）
+PC ── SmartUSB Hub 指令控制口（COM）
+Hub 被测通道 ── 被测开发板
 ```
 
-## 参考链接
+Hub 型号：指令口 VID `1A86` / PID `FE0C`。
 
+## 参考
+
+- [Web 仪表盘使用指南](docs/Web仪表盘使用指南.md)
 - [SmartUSB Hub](https://github.com/mixedsignal-labs/smartusbhub)
+- [问题反馈](https://github.com/RaaayXX/UsbDebug-lab/issues)

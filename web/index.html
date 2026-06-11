@@ -74,7 +74,7 @@
         </label>
         <label class="field field-device-profile">
           <span>设备类型</span>
-          <select id="selDeviceProfile" title="选「自动识别」将根据 COM 描述与串口日志自动切换为对应芯片类型">
+          <select id="selDeviceProfile">
             <option value="auto">自动识别</option>
           </select>
         </label>
@@ -92,7 +92,7 @@
         </label>
         <label class="field field-sm hub-only">
           <span>被测通道</span>
-          <select id="selChannel" title="Sticky 接在 Hub 的哪一路">
+          <select id="selChannel">
             <option value="1">通道 1</option><option value="2">通道 2</option>
             <option value="3">通道 3</option><option value="4">通道 4</option>
           </select>
@@ -101,13 +101,13 @@
 
       <details class="setup-fold hub-only">
         <summary>Hub 接线</summary>
-        <p class="setup-fold-body">上行口接 PC；指令控制口选对应 COM，用于通道控制与电气采样。</p>
+        <p class="setup-fold-body">上行口接 PC；指令控制口选 COM。</p>
       </details>
 
       <div class="setup-row setup-row-product">
         <label class="field field-product-name">
           <span>产品名称</span>
-          <input type="text" id="inpProductName" placeholder="如 reTerminal Sticky" />
+          <input type="text" id="inpProductName" placeholder="" />
         </label>
         <div class="field field-product-brief">
           <span>产品背景</span>
@@ -148,7 +148,6 @@
               <h2>电压 · 电流</h2>
               <button type="button" id="btnSaveVI" class="btn btn-text">保存数据</button>
             </div>
-            <p class="vi-save-hint">点击「保存数据」将分别生成电压、电流文件（有数据则导出，均含时间戳）。</p>
           </div>
           <div class="gauges">
             <div class="gauge">
@@ -176,9 +175,8 @@
               <span class="eyebrow">SmartUSB Hub</span>
               <h2>快捷指令</h2>
             </div>
-            <button type="button" class="btn-help" id="btnHubHelp" title="查看指令说明" aria-label="快捷指令说明">?</button>
+            <button type="button" class="btn-help" id="btnHubHelp" title="指令说明" aria-label="指令说明">?</button>
           </div>
-          <p class="section-desc">对被测通道执行电源、数据通断及采样操作。</p>
           <div class="control-grid" id="hubControls">
             <button type="button" id="btnPowerOn" class="ctrl-btn">
               <span class="ctrl-icon ctrl-on"></span>上电
@@ -191,9 +189,6 @@
             </button>
             <button type="button" id="btnDataOff" class="ctrl-btn">
               <span class="ctrl-icon ctrl-data-off"></span>断开数据
-            </button>
-            <button type="button" id="btnVbusOnlyOff" class="ctrl-btn ctrl-wide">
-              <span class="ctrl-icon ctrl-data-on"></span>断供电·保数据
             </button>
             <button type="button" id="btnHardReboot" class="ctrl-btn ctrl-wide">
               <span class="ctrl-icon ctrl-cycle"></span>硬重启
@@ -208,7 +203,6 @@
               <span class="ctrl-icon ctrl-meter-i"></span>测电流
             </button>
           </div>
-          <p class="hub-cmd-note">Hub 可独立控制 VBUS 与 D+/D-。「断电」只断 5V；「断供电·保数据」先接通数据线再断 VBUS。若 COM 口仍消失，通常是设备在掉 VBUS 后主动断开 USB（需电池 + 固件支持），而非 Hub 把数据也断了。</p>
         </section>
 
         <section class="card card-compact hub-only">
@@ -218,17 +212,14 @@
               <h2>测试场景</h2>
             </div>
           </div>
-          <p class="section-desc">先选产品是否带电池，再选测试场景并配置参数。</p>
           <label class="field field-product">
             <span>产品类型</span>
             <select id="selProductType"></select>
           </label>
-          <p class="product-hint" id="productHint"></p>
           <label class="field field-scenario">
             <span>测试场景</span>
             <select id="selScenario"></select>
           </label>
-          <p class="scenario-hint" id="scenarioHint"></p>
           <div id="scenarioParamsUsb" class="scenario-params" hidden>
             <label class="field field-scenario-param">
               <span>重复插拔次数</span>
@@ -251,7 +242,7 @@
           </div>
           <div class="scenario-run-row">
             <button type="button" id="btnRunScenario" class="btn-scenario-run">开始测试</button>
-            <button type="button" id="btnScenarioHelp" class="btn-help btn-help-sm" title="场景说明" aria-label="场景说明">?</button>
+            <button type="button" id="btnScenarioHelp" class="btn-help btn-help-sm" title="场景参数" aria-label="场景参数">?</button>
           </div>
         </section>
       </aside>
@@ -278,14 +269,13 @@
         </div>
         <div class="analysis-input">
           <label class="field field-observation">
-            <span>观察到的现象（选填）</span>
+            <span>观察到的现象</span>
             <textarea
               id="inpUserObservation"
               rows="4"
-              placeholder="例如：烧录后屏幕不亮；插拔 USB 后约 3 秒重启；待机电流明显高于上一版固件…"
+              placeholder=""
             ></textarea>
           </label>
-          <p id="observationHint" class="observation-hint hub-only">填写后将与当前串口日志、电压/电流曲线一并参与规则检测与 AI 分析。</p>
           <button type="button" id="btnAnalyze" class="btn btn-fill btn-block">
             <span class="btn-analyze-inner">
               <span id="btnAnalyzeSpinner" class="btn-spinner" hidden aria-hidden="true"></span>
@@ -299,7 +289,7 @@
             <p id="analysisStepText" class="analysis-step-text">分析中…</p>
           </div>
         </div>
-        <p id="analysisSummary" class="analysis-lead">填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将导出诊断报告及串口日志。</p>
+        <p id="analysisSummary" class="analysis-lead">—</p>
         <p id="analysisAiHint" class="analysis-ai-hint" hidden></p>
         <div id="findingsList" class="findings"></div>
         <details id="aiDetails" class="ai-block" hidden>
@@ -313,12 +303,12 @@
   <div id="helpPopover" class="help-popover" hidden aria-hidden="true">
     <div class="help-popover-card" role="dialog" aria-labelledby="helpPopoverTitle">
       <header class="help-popover-head">
-        <h3 id="helpPopoverTitle">说明</h3>
+        <h3 id="helpPopoverTitle">参考</h3>
         <button type="button" id="btnHelpPopoverClose" class="btn btn-text" aria-label="关闭">×</button>
       </header>
       <div id="helpPopoverBody" class="help-popover-body prose"></div>
       <footer class="help-popover-foot">
-        <button type="button" id="btnHelpPopoverOk" class="btn btn-fill">知道了</button>
+        <button type="button" id="btnHelpPopoverOk" class="btn btn-fill">关闭</button>
       </footer>
     </div>
   </div>

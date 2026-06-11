@@ -321,7 +321,6 @@ function fillDeviceProfileSelect() {
     const opt = document.createElement("option");
     opt.value = p.id;
     opt.textContent = p.label;
-    if (p.hint) opt.title = p.hint;
     sel.appendChild(opt);
   }
   sel.value = cur;
@@ -428,9 +427,7 @@ function applyHubAvailabilityUi(st) {
   }
   const summary = $("analysisSummary");
   if (summary && !summary.dataset.hasResult) {
-    summary.textContent = hub
-      ? "填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将全部导出为诊断报告及原始数据。"
-      : "填写现象（可选）并点击「智能分析」后，此处显示诊断摘要；保存将导出诊断报告及串口日志。";
+    summary.textContent = "—";
   }
 }
 
@@ -464,8 +461,6 @@ async function loadSettings() {
     $("inpBatteryDuration").value = String(settings.scenario_battery_only_seconds ?? 120);
   }
   renderScenarioSelect(settings.active_scenario || "usb_power_cycle");
-  updateProductHint();
-  updateScenarioHint();
   updateScenarioParams();
   $("chkAi").checked = settings.ai_enabled !== false;
   $("inpApiBase").value =
@@ -474,9 +469,9 @@ async function loadSettings() {
     $("inpApiModel").value = settings.openai_model || "deepseek-v4-flash";
   }
   if (settings.openai_api_key_set) {
-    $("inpApiKey").placeholder = "已保存本机；留空则沿用已保存的 Key";
+    $("inpApiKey").placeholder = "留空沿用已保存";
   } else {
-    $("inpApiKey").placeholder = "必填，与 Chatbox 中「自定义 API 密钥」相同";
+    $("inpApiKey").placeholder = "sk-…";
   }
 }
 
@@ -542,10 +537,10 @@ async function saveReport() {
     !samples.length &&
     !getUserObservation()
   ) {
-    toast("warn", "请先执行「智能分析」，或填写现象并确保有日志/曲线数据");
+    toast("warn", "请先执行智能分析");
     return;
   }
-  toast("info", "正在生成诊断报告…");
+  toast("info", "正在保存…");
   const body = buildSaveBody({
     analysis: lastAnalysis || undefined,
     power: samples.length ? samples : undefined,
@@ -677,9 +672,7 @@ function renderProductTypes() {
     sel.appendChild(opt);
   }
   sel.onchange = () => {
-    updateProductHint();
     renderScenarioSelect();
-    updateScenarioHint();
     updateScenarioParams();
     applySettings();
   };
@@ -705,25 +698,10 @@ function renderScenarioSelect(preferredId) {
   const ids = scenarios.map((s) => s.id);
   sel.value = ids.includes(prev) ? prev : ids[0] || "usb_power_cycle";
   sel.onchange = () => {
-    updateScenarioHint();
     updateScenarioParams();
     applySettings();
   };
   updateScenarioParams();
-}
-
-function updateProductHint() {
-  const id = $("selProductType")?.value;
-  const t = (window.POWER_LAB_PRODUCT_TYPES || []).find((x) => x.id === id);
-  const el = $("productHint");
-  if (el) el.textContent = t ? t.hint : "";
-}
-
-function updateScenarioHint() {
-  const id = getSelectedScenarioId();
-  const sc = (window.POWER_LAB_SCENARIOS || []).find((s) => s.id === id);
-  const el = $("scenarioHint");
-  if (el) el.textContent = sc ? sc.hint || "" : "";
 }
 
 function getScenarioById(id) {
@@ -761,7 +739,7 @@ function formatSaveResult(data) {
   if (data.measure?.path) parts.push(`采样: ${data.measure.path} (${data.measure.rows || 0} 行)`);
   if (data.serial?.path) parts.push(`日志: ${data.serial.path}`);
   if (!data.power?.path && hubAvailable) {
-    parts.push("提示: 未包含电压/电流曲线，请先点击「测电压/测电流」或运行场景后再保存");
+    parts.push("未包含电压/电流曲线");
   }
   return parts.join("\n");
 }
@@ -772,19 +750,131 @@ function esc(s) {
   return d.innerHTML;
 }
 
-function formatAnalysisText(text) {
-  const raw = (text == null ? "" : String(text)).trim();
-  if (!raw || raw === "—") return '<span class="analysis-muted">—</span>';
-  const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
-  if (lines.length >= 2 && lines.every((l) => /^\d+[\.\)、]\s*/.test(l))) {
-    const items = lines.map((l) => l.replace(/^\d+[\.\)、]\s*/, ""));
-    return `<ol class="analysis-list">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>`;
+const AI_FIELD_KEYS = ["title", "source", "likely_cause", "recommendation", "evidence"];
+
+function stripMarkdownFence(text) {
+  let raw = String(text ?? "").trim();
+  if (!raw.startsWith("```")) return raw;
+  const lines = raw.split("\n");
+  if (lines[0]?.match(/^```/)) lines.shift();
+  if (lines.length && lines[lines.length - 1].trim() === "```") lines.pop();
+  return lines.join("\n").trim();
+}
+
+function unescapeJsonFragment(s) {
+  return String(s)
+    .replace(/\\n/g, "\n")
+    .replace(/\\"/g, '"')
+    .replace(/\\t/g, "\t");
+}
+
+function extractJsonFieldByBoundary(s, key, nextKey) {
+  const re = new RegExp(`"${key}"\\s*:\\s*"`, "s");
+  const m = s.match(re);
+  if (!m) return "";
+  const start = m.index + m[0].length;
+  if (nextKey) {
+    const nre = new RegExp(`"\\s*,\\s*"${nextKey}"\\s*:`, "s");
+    const slice = s.slice(start);
+    const nm = slice.match(nre);
+    if (nm) return unescapeJsonFragment(slice.slice(0, nm.index));
   }
+  const slice = s.slice(start);
+  const end = slice.match(/"\s*\n?\s*}/s);
+  if (end) return unescapeJsonFragment(slice.slice(0, end.index));
+  return unescapeJsonFragment(slice);
+}
+
+function looseExtractAiFields(text) {
+  const s = stripMarkdownFence(text);
+  if (!s.includes("{")) return null;
+  const out = {};
+  for (let i = 0; i < AI_FIELD_KEYS.length; i++) {
+    const key = AI_FIELD_KEYS[i];
+    const nextKey = AI_FIELD_KEYS[i + 1] || null;
+    const val = extractJsonFieldByBoundary(s, key, nextKey);
+    if (val) out[key] = val.trim();
+  }
+  return Object.keys(out).length ? out : null;
+}
+
+function unwrapAnalysisField(text, fieldKey) {
+  let raw = stripMarkdownFence(text);
+  if (!raw || raw === "—") return "";
+
+  const looksLikeJson =
+    raw.startsWith("{") ||
+    (fieldKey && raw.includes(`"${fieldKey}"`)) ||
+    raw.includes('"title"');
+
+  if (looksLikeJson) {
+    try {
+      const obj = JSON.parse(raw);
+      if (obj && typeof obj === "object" && !Array.isArray(obj)) {
+        if (fieldKey && obj[fieldKey] != null) return String(obj[fieldKey]).trim();
+        const pick =
+          obj.recommendation || obj.likely_cause || obj.evidence || obj.title || obj.source;
+        if (pick != null) return String(pick).trim();
+      }
+    } catch (_) {
+      const loose = looseExtractAiFields(raw);
+      if (loose) {
+        if (fieldKey && loose[fieldKey]) return loose[fieldKey];
+        return loose.recommendation || loose.likely_cause || loose.title || "";
+      }
+    }
+  }
+  return raw;
+}
+
+function splitNumberedItems(text) {
+  const lines = text
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (lines.length >= 2 && lines.every((l) => /^\d+[\.\)、]\s*/.test(l))) {
+    return lines.map((l) => l.replace(/^\d+[\.\)、]\s*/, ""));
+  }
+  const inline = text.replace(/\n+/g, " ").trim();
+  const parts = inline
+    .split(/(?=\d+[\.\)、]\s+)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (parts.length >= 2 && parts.every((p) => /^\d+[\.\)、]\s*/.test(p))) {
+    return parts.map((p) => p.replace(/^\d+[\.\)、]\s*/, ""));
+  }
+  return null;
+}
+
+function formatAnalysisText(text, fieldKey) {
+  const raw = unwrapAnalysisField(text, fieldKey);
+  if (!raw || raw === "—") return '<span class="analysis-muted">—</span>';
+  const numbered = splitNumberedItems(raw);
+  if (numbered) {
+    return `<ol class="analysis-list">${numbered.map((i) => `<li>${esc(i)}</li>`).join("")}</ol>`;
+  }
+  const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
   if (lines.length >= 2 && lines.every((l) => /^[-*•]\s+/.test(l))) {
     const items = lines.map((l) => l.replace(/^[-*•]\s+/, ""));
     return `<ul class="analysis-list">${items.map((i) => `<li>${esc(i)}</li>`).join("")}</ul>`;
   }
+  if (lines.length === 1) {
+    return `<p class="analysis-para">${esc(lines[0])}</p>`;
+  }
   return lines.map((l) => `<p class="analysis-para">${esc(l)}</p>`).join("");
+}
+
+function formatEvidenceBlock(text) {
+  const raw = unwrapAnalysisField(text, "evidence");
+  if (!raw) return "";
+  const logLike = /^\[\d{4}-/.test(raw) || (raw.includes("I (") && /\)\s/.test(raw));
+  if (logLike) {
+    const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean);
+    return `<div class="finding-evidence-lines">${lines
+      .map((l) => `<div class="finding-log-line">${esc(l)}</div>`)
+      .join("")}</div>`;
+  }
+  return formatAnalysisText(raw, "evidence");
 }
 
 function renderFindingCard(f, extraClass = "") {
@@ -793,19 +883,22 @@ function renderFindingCard(f, extraClass = "") {
   const sev = f.severity_label || f.severity || "提示";
   const logOrigin = f.log_origin || "";
   const logLoc = f.log_location || "";
-  const logExcerpt = f.log_excerpt || f.evidence || "";
+  const logExcerpt = f.log_excerpt || "";
+  const evidenceBlock = f.evidence || "";
+  const evidenceLabel = f.evidence_label || (logExcerpt ? "匹配日志" : "");
   const logSourceLine =
     logOrigin && logLoc
       ? `${logOrigin} · ${logLoc}`
       : logOrigin || logLoc || "";
   div.innerHTML = `
-    <div class="finding-title"><span class="finding-sev">${esc(sev)}</span> ${esc(f.message || f.title || "")}</div>
+    <div class="finding-title"><span class="finding-sev">${esc(sev)}</span> ${esc(unwrapAnalysisField(f.message || f.title, "title") || f.message || f.title || "")}</div>
     <dl class="finding-detail">
-      <dt>发现来源</dt><dd class="finding-body">${formatAnalysisText(f.source || "—")}</dd>
+      <dt>发现来源</dt><dd class="finding-body">${formatAnalysisText(f.source || "—", "source")}</dd>
       ${logSourceLine ? `<dt>日志来源</dt><dd class="finding-body">${esc(logSourceLine)}</dd>` : ""}
-      <dt>可能原因</dt><dd class="finding-body">${formatAnalysisText(f.likely_cause || "—")}</dd>
-      <dt>建议排查</dt><dd class="finding-body finding-actions">${formatAnalysisText(f.recommendation || "—")}</dd>
-      ${logExcerpt ? `<dt>匹配日志</dt><dd class="finding-evidence"><pre class="finding-log-line">${esc(logExcerpt)}</pre></dd>` : ""}
+      <dt>可能原因</dt><dd class="finding-body">${formatAnalysisText(f.likely_cause || "—", "likely_cause")}</dd>
+      <dt>建议排查</dt><dd class="finding-body finding-actions">${formatAnalysisText(f.recommendation || "—", "recommendation")}</dd>
+      ${logExcerpt ? `<dt>${esc(evidenceLabel || "匹配日志")}</dt><dd class="finding-evidence"><pre class="finding-log-line">${esc(logExcerpt)}</pre></dd>` : ""}
+      ${evidenceBlock && evidenceBlock !== logExcerpt ? `<dt>依据片段</dt><dd class="finding-evidence">${formatEvidenceBlock(evidenceBlock)}</dd>` : ""}
     </dl>`;
   return div;
 }
@@ -813,7 +906,7 @@ function renderFindingCard(f, extraClass = "") {
 function renderAnalysis(data) {
   lastAnalysis = data;
   const summaryEl = $("analysisSummary");
-  summaryEl.textContent = data.summary || "";
+  summaryEl.textContent = data.summary || "—";
   summaryEl.classList.toggle("has-result", !!data.summary);
   summaryEl.dataset.hasResult = data.summary ? "1" : "";
   const aiHint = $("analysisAiHint");
@@ -855,7 +948,7 @@ function renderAnalysis(data) {
     );
     const shown = notable.length ? notable : ruleFindings.slice(0, 3);
     if (!shown.length) {
-      list.innerHTML = '<p class="hint-empty">未发现规则匹配项</p>';
+      list.innerHTML = '<p class="hint-empty">无匹配项</p>';
     } else {
       for (const f of shown) list.appendChild(renderFindingCard(f));
     }
@@ -890,16 +983,7 @@ function renderAnalysis(data) {
   }
 
   const aiBlock = $("aiDetails");
-  if (data.ai_text && ai) {
-    aiBlock.hidden = false;
-    const el = $("aiText");
-    if (typeof marked !== "undefined") {
-      marked.setOptions({ gfm: true, breaks: true });
-      el.innerHTML = marked.parse(data.ai_text);
-    } else {
-      el.textContent = data.ai_text;
-    }
-  } else if (data.ai_text && !ai) {
+  if (data.ai_text && !ai) {
     aiBlock.hidden = false;
     const el = $("aiText");
     if (typeof marked !== "undefined") {
@@ -993,7 +1077,7 @@ function setAnalysisLoading(loading, opts = {}) {
 async function runAnalyze() {
   const obs = getUserObservation();
   if (!getSerialText().trim() && !powerData.t.length && !obs) {
-    toast("warn", "请先录制日志/曲线，或填写观察到的现象");
+    toast("warn", "无分析数据");
     return;
   }
   saveUserObservation();
@@ -1028,9 +1112,9 @@ async function runAnalyze() {
     renderAnalysis(data);
     lastAnalysis = data;
     if (data.ai_used && data.ai_text) {
-      toast("ok", "分析完成（含 AI 说明）");
+      toast("ok", "分析完成");
     } else if (data.ai_skip_reason) {
-      toast("warn", `规则分析完成；${data.ai_skip_reason}`);
+      toast("warn", data.ai_skip_reason || "规则分析完成");
     } else {
       toast("ok", "规则分析完成");
     }
@@ -1058,11 +1142,11 @@ function connectSocket() {
 
   socket.on("connect", () => {
     renderDeviceStatus({ ...deviceStatus });
-    toast("ok", "调试服务已连接");
+    toast("ok", "已连接");
   });
   socket.on("disconnect", () => {
     renderDeviceStatus({});
-    toast("error", "与调试服务断开");
+    toast("error", "连接断开");
   });
 
   socket.on("device_status", renderDeviceStatus);
@@ -1169,29 +1253,23 @@ function renderHubHelpHtml() {
 }
 
 function renderScenarioHelpHtml(help) {
-  if (!help) return "<p>暂无说明</p>";
+  if (!help) return "<p>—</p>";
   let html = "";
-  if (help.goal) {
-    html += `<p class="help-lead">${esc(help.goal)}</p>`;
-  }
   if (help.byProduct?.length) {
-    html += '<div class="help-block"><span class="help-block-label">插拔方式</span><div class="help-kv-list">';
+    html += '<div class="help-block"><span class="help-block-label">插拔序列</span><div class="help-kv-list">';
     for (const row of help.byProduct) {
       html += `<div class="help-kv"><span>${esc(row.type)}</span><span>${esc(row.action)}</span></div>`;
     }
     html += "</div></div>";
   }
   if (help.flow?.length) {
-    html += '<div class="help-block"><span class="help-block-label">流程</span><ol class="help-steps">';
+    html += '<div class="help-block"><span class="help-block-label">步骤</span><ol class="help-steps">';
     for (const step of help.flow) {
       html += `<li>${esc(step)}</li>`;
     }
     html += "</ol></div>";
   }
-  if (help.note) {
-    html += `<p class="help-note">${esc(help.note)}</p>`;
-  }
-  return html;
+  return html || "<p>—</p>";
 }
 
 function openHelpPopover(title, content) {
@@ -1235,22 +1313,7 @@ async function runSelectedScenario() {
   const title = sc ? sc.title : id;
   const params = getScenarioParams();
   const repeats = params.scenario_repeat_count;
-  let confirmMsg = sc?.confirm;
-  if (!confirmMsg) {
-    if (id === "battery_only_serial") {
-      const batteryS = params.scenario_battery_only_seconds ?? 120;
-      confirmMsg =
-        `即将运行场景「${title}」。\n\n` +
-        `将切断 Hub VBUS ${repeats} 轮（每轮仅电池运行 ${batteryS}s），` +
-        `USB 数据保持连通以便持续看串口，并录制 V/I 曲线。期间请勿烧录。是否继续？`;
-    } else {
-      const interval = params.scenario_cycle_wait_seconds ?? 4;
-      confirmMsg =
-        `即将运行场景「${title}」。\n\n` +
-        `将重复 USB 插拔 ${repeats} 次（间隔 ${interval}s），` +
-        `并联合录制串口日志与 V/I 曲线。期间请勿烧录。是否继续？`;
-    }
-  }
+  const confirmMsg = sc?.confirm || `运行「${title}」？期间请勿烧录。`;
   if (!confirm(confirmMsg)) return;
   await applySettings();
   showScenarioProgress(true);
@@ -1283,7 +1346,7 @@ function bindUi() {
   });
 
   $("btnHubHelp").onclick = () => {
-    openHelpPopover("快捷指令", renderHubHelpHtml());
+    openHelpPopover("快捷指令参考", renderHubHelpHtml());
   };
   $("btnHelpPopoverClose").onclick = closeHelpPopover;
   $("btnHelpPopoverOk").onclick = closeHelpPopover;
@@ -1321,8 +1384,6 @@ function bindUi() {
     socket.emit("hub_dataline", hubShortcutPayload({ on: true, refresh_serial: false }));
   $("btnDataOff").onclick = () =>
     socket.emit("hub_dataline", hubShortcutPayload({ on: false, refresh_serial: false }));
-  $("btnVbusOnlyOff").onclick = () =>
-    socket.emit("hub_vbus_only_off", hubShortcutPayload({ refresh_serial: false }));
   $("btnHardReboot").onclick = () =>
     socket.emit("hub_reboot", hubShortcutPayload({ refresh_serial: true }));
   $("btnHubTest").onclick = () =>

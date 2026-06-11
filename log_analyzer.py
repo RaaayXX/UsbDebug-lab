@@ -527,7 +527,7 @@ def rule_based_analyze(
     elif warning:
         summary = f"未发现芯片级崩溃关键字，但有 {warning} 项需关注（见下方条目）。"
     elif not serial_text.strip() and not power_samples:
-        summary = "当前无足够日志或曲线数据；请填写现象描述并先录制/采集后再分析。"
+        summary = "数据不足"
     else:
         summary = "规则检测未发现明显异常；若仍有现象，可启用 AI 结合用户描述深度分析。"
 
@@ -610,49 +610,160 @@ def _post_chat_completions(url: str, api_key: str, payload: dict[str, Any]) -> d
         return json.loads(resp.read().decode())
 
 
-def _parse_ai_structured(raw: str) -> dict[str, str]:
-    """将 AI 回复解析为固定字段（JSON 优先，否则降级为全文）。"""
-    text = (raw or "").strip()
-    if not text:
-        return {
-            "title": "AI 分析结论",
-            "source": "—",
-            "likely_cause": "—",
-            "recommendation": "—",
-            "evidence": "",
-        }
-    candidate = text
-    fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
-    if fence:
-        candidate = fence.group(1)
-    else:
-        brace = re.search(r"\{.*\}", text, re.DOTALL)
-        if brace:
-            candidate = brace.group(0)
+def _strip_markdown_fence(text: str) -> str:
+    s = (text or "").strip()
+    if not s.startswith("```"):
+        return s
+    lines = s.splitlines()
+    if lines and lines[0].startswith("```"):
+        lines = lines[1:]
+    if lines and lines[-1].strip() == "```":
+        lines = lines[:-1]
+    return "\n".join(lines).strip()
+
+
+def _extract_json_object(text: str) -> Optional[dict[str, Any]]:
+    """从 AI 回复中提取完整 JSON 对象（支持 markdown 围栏与嵌套花括号）。"""
+    s = _strip_markdown_fence(text)
+    if not s:
+        return None
     try:
-        obj = json.loads(candidate)
-        if isinstance(obj, dict):
-            return {
-                "title": str(
-                    obj.get("title") or obj.get("message") or obj.get("conclusion") or "AI 分析结论"
-                ).strip(),
-                "source": str(obj.get("source") or "AI 综合研判（日志·现象·产品背景）").strip(),
-                "likely_cause": str(
-                    obj.get("likely_cause") or obj.get("cause") or "—"
-                ).strip(),
-                "recommendation": str(
-                    obj.get("recommendation") or obj.get("next_steps") or "—"
-                ).strip(),
-                "evidence": str(obj.get("evidence") or "").strip(),
-            }
-    except (json.JSONDecodeError, TypeError, ValueError):
+        obj = json.loads(s)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
         pass
+    start = s.find("{")
+    if start < 0:
+        return None
+    depth = 0
+    in_string = False
+    escape = False
+    for i in range(start, len(s)):
+        ch = s[i]
+        if in_string:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == '"':
+                in_string = False
+            continue
+        if ch == '"':
+            in_string = True
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                try:
+                    obj = json.loads(s[start : i + 1])
+                    return obj if isinstance(obj, dict) else None
+                except json.JSONDecodeError:
+                    return None
+    return None
+
+
+def _ai_field_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        parts = [str(x).strip() for x in value if str(x).strip()]
+        return "\n".join(f"{i + 1}. {p}" for i, p in enumerate(parts))
+    return str(value).strip()
+
+
+def _unescape_json_fragment(s: str) -> str:
+    return s.replace("\\n", "\n").replace('\\"', '"').replace("\\t", "\t").replace("\\\\", "\\")
+
+
+def _extract_json_field_by_boundary(s: str, key: str, next_key: Optional[str]) -> str:
+    m = re.search(rf'"{re.escape(key)}"\s*:\s*"', s, re.DOTALL)
+    if not m:
+        return ""
+    start = m.end()
+    if next_key:
+        nm = re.search(
+            rf'"\s*,\s*"{re.escape(next_key)}"\s*:',
+            s[start:],
+            re.DOTALL,
+        )
+        if nm:
+            return _unescape_json_fragment(s[start : start + nm.start()])
+    nm = re.search(r'"\s*\n?\s*}', s[start:], re.DOTALL)
+    if nm:
+        return _unescape_json_fragment(s[start : start + nm.start()])
+    return _unescape_json_fragment(s[start:])
+
+
+def _loose_extract_ai_fields(text: str) -> Optional[dict[str, str]]:
+    """JSON 含未转义引号时，按字段边界提取各键值。"""
+    s = _strip_markdown_fence(text)
+    if "{" not in s:
+        return None
+    chain = ["title", "source", "likely_cause", "recommendation", "evidence"]
+    aliases: dict[str, tuple[str, ...]] = {
+        "title": ("message", "conclusion"),
+        "likely_cause": ("cause",),
+        "recommendation": ("next_steps",),
+    }
+    out: dict[str, str] = {}
+    for i, key in enumerate(chain):
+        next_key = chain[i + 1] if i + 1 < len(chain) else None
+        val = _extract_json_field_by_boundary(s, key, next_key)
+        if not val:
+            for alt in aliases.get(key, ()):
+                val = _extract_json_field_by_boundary(s, alt, next_key)
+                if val:
+                    break
+        if val:
+            out[key] = val.strip()
+    return out if out else None
+
+
+def _ai_fields_from_object(obj: dict[str, Any]) -> dict[str, str]:
+    return {
+        "title": _ai_field_text(
+            obj.get("title") or obj.get("message") or obj.get("conclusion") or "AI 分析结论"
+        )
+        or "AI 分析结论",
+        "source": _ai_field_text(obj.get("source")) or "AI 综合研判",
+        "likely_cause": _ai_field_text(obj.get("likely_cause") or obj.get("cause")) or "—",
+        "recommendation": _ai_field_text(
+            obj.get("recommendation") or obj.get("next_steps")
+        )
+        or "—",
+        "evidence": _ai_field_text(obj.get("evidence")),
+    }
+
+
+def _parse_ai_structured(raw: str) -> dict[str, str]:
+    """将 AI 回复解析为固定字段（JSON 优先，边界提取兜底）。"""
+    text = (raw or "").strip()
+    empty = {
+        "title": "AI 分析结论",
+        "source": "—",
+        "likely_cause": "—",
+        "recommendation": "—",
+        "evidence": "",
+    }
+    if not text:
+        return empty
+    obj = _extract_json_object(text)
+    if obj:
+        return _ai_fields_from_object(obj)
+    loose = _loose_extract_ai_fields(text)
+    if loose:
+        merged = dict(empty)
+        merged.update({k: v for k, v in loose.items() if v})
+        if merged.get("title") == "AI 分析结论" and loose.get("title"):
+            merged["title"] = loose["title"]
+        return merged
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     return {
         "title": lines[0][:160] if lines else "AI 分析结论",
-        "source": "AI 综合研判（日志·现象·产品背景）",
+        "source": "AI 综合研判",
         "likely_cause": "—",
-        "recommendation": text,
+        "recommendation": _strip_markdown_fence(text)[:4000],
         "evidence": "",
     }
 
@@ -704,12 +815,12 @@ def openai_analyze(
 {log_tail}
 ```
 
-请**仅输出一个 JSON 对象**（不要 markdown 代码块外的其它文字），字段如下：
-- title: 综合结论（一句话，说明是否支持用户描述的现象）
-- source: 发现来源（依据哪些数据得出，如串口日志、用户描述、电气曲线等）
-- likely_cause: 可能原因（结合产品背景与日志的具体推断，勿写空泛套话）
-- recommendation: 建议排查（可操作的下一步，面向测试/产品人员）
-- evidence: 依据片段（引用关键日志行或用户原话，可多行）
+请**仅输出一个 JSON 对象**（不要 markdown 代码块、不要多余说明文字），字段均为**纯文本字符串**：
+- title: 综合结论（一句话）
+- source: 发现来源
+- likely_cause: 可能原因（多条用「1. 」「2.」分行，勿嵌套 JSON；字符串内勿使用英文双引号，引用时用「」）
+- recommendation: 建议排查（多条用「1. 」「2.」分行，每条一句可操作步骤）
+- evidence: 依据片段（引用关键日志，换行分隔）
 """
     payload = {
         "model": model,
@@ -818,9 +929,7 @@ def full_analyze(
 
     key = (ai_cfg.get("openai_api_key") or "").strip()
     if not key:
-        result.ai_skip_reason = (
-            "未配置 API Key，本次仅完成规则分析。可在右侧「分析配置」中填写 OpenAI 兼容 Key 后重新分析。"
-        )
+        result.ai_skip_reason = "未配置 API Key"
         return result
 
     power_summary = _power_summary_text(power_samples)
@@ -841,7 +950,6 @@ def full_analyze(
         )
         result.ai_structured = _parse_ai_structured(result.ai_text)
         result.ai_used = True
-        result.summary += " （已附加 AI 分析）"
     except Exception as exc:
         detail = str(exc)
         resp = getattr(exc, "response", None)
