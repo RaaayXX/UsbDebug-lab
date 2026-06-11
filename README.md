@@ -29,7 +29,7 @@ python -m venv venv
 .\venv\Scripts\python.exe dashboard_server.py
 ```
 
-浏览器访问 **http://127.0.0.1:8765**（须通过服务地址打开，不可直接打开 `web/index.html`）。
+浏览器访问 http://127.0.0.1:8765（须通过服务地址打开，不可直接打开 `web/index.html`）。
 
 ### Web 能力摘要
 
